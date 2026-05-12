@@ -40,3 +40,8 @@ jobs:
 
       - name: Calendar smoke test
         run: npm run test:calendar
+        env:
+          SESSION_SECRET: ci-session-secret
+          GOOGLE_CLIENT_ID: ci-google-client-id
+          GOOGLE_CLIENT_SECRET: ci-google-client-secret
+          GEMINI_API_KEY: ci-gemini-api-key
