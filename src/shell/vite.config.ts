@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
+const haloComponentsRoot = path.resolve(
+  __dirname,
+  process.env.HALO_COMPONENTS_PATH || '../../../halo-components'
+);
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   envDir: path.resolve(__dirname, '../..'),
@@ -12,20 +17,20 @@ export default defineConfig({
       'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
       'lucide-react': path.resolve(__dirname, 'node_modules/lucide-react'),
       'halo-components/admin-agent-panel': path.resolve(
-        __dirname,
-        '../../../halo-components/agents/admin-agent/client/components/AdminAgentPanel.tsx'
+        haloComponentsRoot,
+        'agents/admin-agent/client/components/AdminAgentPanel.tsx'
       ),
       'halo-components/admin-agent-onboarding': path.resolve(
-        __dirname,
-        '../../../halo-components/agents/admin-agent/client/components/AdminAgentOnboarding.tsx'
+        haloComponentsRoot,
+        'agents/admin-agent/client/components/AdminAgentOnboarding.tsx'
       ),
       'halo-components/header-consultation-recorder': path.resolve(
-        __dirname,
-        '../../../halo-components/agents/scribe-agent/client/features/scribe/HeaderConsultationRecorder.tsx'
+        haloComponentsRoot,
+        'agents/scribe-agent/client/features/scribe/HeaderConsultationRecorder.tsx'
       ),
       'halo-components/billing-page': path.resolve(
-        __dirname,
-        '../../../halo-components/agents/billing-agent/client/BillingPage.tsx'
+        haloComponentsRoot,
+        'agents/billing-agent/client/BillingPage.tsx'
       ),
     },
   },
