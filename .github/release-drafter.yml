@@ -1,0 +1,33 @@
+name-template: "halo-genesis v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+template: |
+  ## Changes
+
+  $CHANGES
+
+categories:
+  - title: "Features"
+    labels: ["type: feature"]
+  - title: "Fixes"
+    labels: ["type: fix"]
+  - title: "Refactors"
+    labels: ["type: refactor"]
+  - title: "Docs"
+    labels: ["type: docs"]
+  - title: "CI / Build"
+    labels: ["type: ci", "type: build"]
+  - title: "Internal"
+    labels: ["type: chore", "type: test"]
+
+version-resolver:
+  major:
+    labels: ["semver:major"]
+  minor:
+    labels: ["type: feature", "semver:minor"]
+  patch:
+    labels: ["type: fix", "type: refactor", "type: docs", "type: ci", "type: build", "type: chore", "type: test", "semver:patch"]
+  default: patch
+
+exclude-labels:
+  - "skip-changelog"

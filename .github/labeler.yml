@@ -1,0 +1,37 @@
+layer-a:
+  - changed-files:
+      - any-glob-to-any-file: "**/*"
+
+shell:
+  - changed-files:
+      - any-glob-to-any-file: "src/shell/**"
+
+server:
+  - changed-files:
+      - any-glob-to-any-file: "server/**"
+
+shared:
+  - changed-files:
+      - any-glob-to-any-file: "shared/**"
+
+registry:
+  - changed-files:
+      - any-glob-to-any-file: "registry/**"
+
+supabase:
+  - changed-files:
+      - any-glob-to-any-file: "supabase/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/workflows/**"
+
+governance:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "CODEOWNERS"
+          - "README.md"
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file: "**/*.md"

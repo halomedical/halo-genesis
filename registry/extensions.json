@@ -1,0 +1,41 @@
+[
+  {
+    "id": "scribe-agent-v1",
+    "display_name": "Scribe Agent",
+    "description": "Clinical note generation pipeline with patient summary awareness",
+    "specialty_tags": ["all"],
+    "required_endpoints": ["scribe"],
+    "required_config_keys": ["features.scribe"],
+    "ui_surface": "assistant-tab",
+    "minimum_tier": "starter",
+    "billing_model": "per_note",
+    "version": "1.0.0",
+    "built_by": "halo-components"
+  },
+  {
+    "id": "admin-agent-v1",
+    "display_name": "Admin Agent",
+    "description": "Document routing, labs and radiology loading, and practice memory operations",
+    "specialty_tags": ["all"],
+    "required_endpoints": ["drive-adapter", "agent-executor", "vps-api"],
+    "required_config_keys": ["features.admin_agent"],
+    "ui_surface": "admin-agent-panel",
+    "minimum_tier": "practice",
+    "billing_model": "per_document",
+    "version": "1.0.0",
+    "built_by": "halo-components"
+  },
+  {
+    "id": "billing-agent-v1",
+    "display_name": "Billing Agent",
+    "description": "Billing orchestration and external billing API handoff",
+    "specialty_tags": ["all"],
+    "required_endpoints": ["billing-api"],
+    "required_config_keys": ["features.billing"],
+    "ui_surface": "billing-tab",
+    "minimum_tier": "practice",
+    "billing_model": "sliding_percentage",
+    "version": "1.0.0",
+    "built_by": "halo-components"
+  }
+]

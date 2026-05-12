@@ -1,0 +1,78 @@
+name: sync-labels
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sync-labels.yml"
+      - ".github/labeler.yml"
+      - ".github/release-drafter.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure governance/release labels exist
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = [
+              { name: "type: feature", color: "1d76db", description: "Conventional type feat" },
+              { name: "type: fix", color: "d73a4a", description: "Conventional type fix" },
+              { name: "type: refactor", color: "fbca04", description: "Conventional type refactor" },
+              { name: "type: docs", color: "0e8a16", description: "Conventional type docs" },
+              { name: "type: test", color: "5319e7", description: "Conventional type test" },
+              { name: "type: chore", color: "c2e0c6", description: "Conventional type chore" },
+              { name: "type: ci", color: "bfd4f2", description: "Conventional type ci" },
+              { name: "type: build", color: "bfd4f2", description: "Conventional type build" },
+              { name: "type: perf", color: "ff9f1c", description: "Conventional type perf" },
+              { name: "type: revert", color: "6f42c1", description: "Conventional type revert" },
+              { name: "semver:major", color: "b60205", description: "Forces major release bump" },
+              { name: "semver:minor", color: "d93f0b", description: "Forces minor release bump" },
+              { name: "semver:patch", color: "fbca04", description: "Forces patch release bump" },
+              { name: "skip-changelog", color: "ededed", description: "Excluded from release notes" },
+              { name: "layer-a", color: "0052cc", description: "Touches Layer A" },
+              { name: "shell", color: "0366d6", description: "Touches shell client code" },
+              { name: "server", color: "0366d6", description: "Touches server code" },
+              { name: "shared", color: "0366d6", description: "Touches shared contracts" },
+              { name: "supabase", color: "0366d6", description: "Touches Supabase assets" },
+              { name: "registry", color: "0366d6", description: "Touches extension registry" },
+              { name: "ci", color: "0e8a16", description: "CI/workflow change" },
+              { name: "governance", color: "5319e7", description: "CODEOWNERS/process/guardrails" },
+              { name: "docs", color: "0075ca", description: "Documentation changes" },
+            ];
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                });
+                await github.rest.issues.updateLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                  new_name: label.name,
+                  color: label.color,
+                  description: label.description,
+                });
+              } catch (error) {
+                if (error.status === 404) {
+                  await github.rest.issues.createLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: label.name,
+                    color: label.color,
+                    description: label.description,
+                  });
+                } else {
+                  throw error;
+                }
+              }
+            }

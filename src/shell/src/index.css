@@ -1,0 +1,179 @@
+@import "tailwindcss";
+
+/* ── Custom animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Green pulse for live connection badges */
+@keyframes livePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  50%       { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+.agent-live-badge {
+  animation: livePulse 2.5s ease-in-out infinite;
+}
+
+/* Shimmer for marketplace Activate button */
+@keyframes shimmer {
+  0%   { transform: translateX(-100%) skewX(-12deg); }
+  100% { transform: translateX(250%) skewX(-12deg); }
+}
+.activate-btn:hover .shimmer-effect {
+  animation: shimmer 0.7s ease-out forwards;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f4f9fc;
+  color: #0f172a;
+}
+
+/* Custom scrollbar — subtle and clean */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #e2e8f0;
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #cbd5e1;
+}
+
+.halo-calendar .fc {
+  height: 100%;
+  --fc-border-color: #e7eff5;
+  --fc-neutral-bg-color: #f7fbfd;
+  --fc-page-bg-color: #ffffff;
+  --fc-list-event-hover-bg-color: #eef8fc;
+  --fc-now-indicator-color: #ef4444;
+}
+
+.halo-calendar .fc-scrollgrid {
+  border: none;
+  border-radius: 24px;
+}
+
+.halo-calendar .fc-theme-standard td,
+.halo-calendar .fc-theme-standard th {
+  border-color: #e8eff5;
+}
+
+.halo-calendar .fc-col-header-cell {
+  background: #fbfdff;
+  padding: 12px 0;
+}
+
+.halo-calendar .fc-col-header-cell-cushion {
+  width: 100%;
+  padding: 6px 8px;
+  text-decoration: none;
+}
+
+.halo-calendar .fc-timegrid-slot-label-cushion,
+.halo-calendar .fc-timegrid-axis-cushion {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0 10px;
+}
+
+.halo-calendar .fc-timegrid-axis {
+  background: #fbfdff;
+}
+
+.halo-calendar .fc-timegrid-slot {
+  height: 3.85rem;
+}
+
+.halo-calendar .fc-timegrid-now-indicator-line {
+  border-color: #e85d75;
+}
+
+.halo-calendar .fc-timegrid-now-indicator-arrow {
+  border-top-color: #e85d75;
+  border-bottom-color: #e85d75;
+}
+
+.halo-calendar .fc-day-today {
+  background: #f4fbfe !important;
+}
+
+.halo-calendar .fc-daygrid-day-number,
+.halo-calendar .fc-timegrid-slot-label {
+  color: #475569;
+}
+
+.halo-calendar .fc-event {
+  border: none;
+  border-radius: 16px;
+  box-shadow: 0 16px 30px -24px rgba(15, 23, 42, 0.4);
+  padding: 1px;
+}
+
+.halo-calendar .fc-event-main {
+  background: linear-gradient(180deg, #ffffff 0%, #eff8fc 100%);
+  border: 1px solid #bae0ee;
+  border-radius: 15px;
+  padding: 6px 8px;
+}
+
+.halo-calendar .fc-daygrid-event-dot {
+  display: none;
+}
+
+.halo-calendar .fc-event-title,
+.halo-calendar .fc-event-time {
+  color: #0f172a;
+}
+
+.halo-calendar-event-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.halo-calendar .fc-highlight {
+  background: rgba(57, 169, 201, 0.14);
+  border-radius: 18px;
+}
+
+.halo-calendar .fc-popover {
+  border-radius: 18px;
+  border: 1px solid #dbe8f0;
+  box-shadow: 0 20px 45px -32px rgba(15, 23, 42, 0.4);
+}
+
+.halo-calendar .fc-timegrid-col.fc-day-today,
+.halo-calendar .fc-daygrid-day.fc-day-today {
+  box-shadow: inset 0 0 0 1px rgba(57, 169, 201, 0.08);
+}
+
+.halo-calendar .fc-daygrid-day-frame {
+  padding: 4px;
+}
+
+.halo-calendar .fc-daygrid-day-number {
+  padding: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.halo-calendar .fc-timegrid-divider {
+  background: #f7fbfd;
+}
+
+.halo-calendar .fc-timegrid-slot-minor {
+  border-top-style: dotted;
+}

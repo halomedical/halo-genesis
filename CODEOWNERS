@@ -1,0 +1,17 @@
+# Replace team slugs below with your exact GitHub teams.
+
+# Core defaults
+* @halomedical/platform-core
+
+# Layer A shell/runtime and server remain core-owned
+/server/** @halomedical/platform-core
+/shared/** @halomedical/platform-core
+/src/shell/** @halomedical/platform-core
+/src/agent-executor/** @halomedical/platform-core
+/src/drive-adapter/** @halomedical/platform-core
+/supabase/** @halomedical/platform-core
+/registry/** @halomedical/platform-core
+
+# CI and governance
+/.github/** @halomedical/platform-core
+/README.md @halomedical/platform-core
