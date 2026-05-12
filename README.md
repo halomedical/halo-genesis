@@ -13,3 +13,4 @@ This root is the **Immutable Shell**.
 
 ## Governance Guardrail
 Agents write config. Humans write code. No agent has write access to Layer A or C. All data must be scoped by practice_id.
+Validation ping.
