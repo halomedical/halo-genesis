@@ -14,21 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout halo-components dependency (cross-repo token)
-        if: ${{ secrets.HALO_COMPONENTS_READ_TOKEN != '' }}
+      - name: Checkout halo-components dependency
         uses: actions/checkout@v4
         with:
           repository: halomedical/halo-components
           ref: main
-          token: ${{ secrets.HALO_COMPONENTS_READ_TOKEN }}
-          path: halo-components
-
-      - name: Checkout halo-components dependency (default token)
-        if: ${{ secrets.HALO_COMPONENTS_READ_TOKEN == '' }}
-        uses: actions/checkout@v4
-        with:
-          repository: halomedical/halo-components
-          ref: main
+          token: ${{ secrets.HALO_COMPONENTS_READ_TOKEN || github.token }}
           path: halo-components
 
       - name: Setup Node
