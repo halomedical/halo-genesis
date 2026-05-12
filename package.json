@@ -1,0 +1,54 @@
+{
+  "name": "halo-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev:server": "nodemon --exec ts-node server/index.ts",
+    "dev:shell": "npm run dev --prefix src/shell",
+    "dev": "echo \"Unified shell dev server: http://localhost:5173\" && concurrently \"npm run dev:server\" \"wait-on http://localhost:3001/api/health && npm run dev:shell\"",
+    "install:shell": "npm ci --prefix src/shell --include=dev",
+    "build": "npm run build:shell && tsc",
+    "build:server": "tsc",
+    "build:shell": "npm run install:shell && npm run build --prefix src/shell",
+    "start": "node server/dist/server/index.js",
+    "test:calendar": "ts-node server/tests/calendar-normalise.test.ts"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@deepgram/sdk": "^4.11.3",
+    "@google/generative-ai": "^0.24.1",
+    "cors": "^2.8.6",
+    "docx": "^9.5.1",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "express-session": "^1.19.0",
+    "googleapis": "^171.4.0",
+    "mammoth": "^1.11.0",
+    "nodemailer": "^8.0.1",
+    "pdf-parse": "^2.4.5",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/express-rate-limit": "^5.1.3",
+    "@types/express-session": "^1.18.2",
+    "@types/node": "^25.2.2",
+    "@types/nodemailer": "^7.0.10",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "wait-on": "^8.0.1"
+  }
+}

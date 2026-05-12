@@ -1,0 +1,5 @@
+node_modules/
+server/dist/
+.env
+src/shell/node_modules/
+src/shell/dist/
