@@ -14,13 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout halo-components dependency
-        uses: actions/checkout@v4
-        with:
-          repository: halomedical/halo-components
-          ref: main
-          token: ${{ secrets.HALO_COMPONENTS_READ_TOKEN || github.token }}
-          path: halo-components
+      - name: Clone halo-components dependency
+        env:
+          HALO_COMPONENTS_TOKEN: ${{ secrets.HALO_COMPONENTS_READ_TOKEN || github.token }}
+        run: |
+          rm -rf ../halo-components
+          git clone --depth 1 --branch main "https://x-access-token:${HALO_COMPONENTS_TOKEN}@github.com/halomedical/halo-components.git" ../halo-components
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -37,7 +36,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          HALO_COMPONENTS_PATH: ../../halo-components
+          HALO_COMPONENTS_PATH: ../../../halo-components
 
       - name: Calendar smoke test
         run: npm run test:calendar
