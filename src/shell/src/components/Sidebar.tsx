@@ -26,6 +26,7 @@ interface SidebarProps {
   adminAgentOpen?: boolean;
   onToggleAdminAgent?: () => void;
   onOpenMarketplace?: () => void;
+  billingEnabled?: boolean;
   onOpenBilling?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
@@ -50,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   adminAgentOpen = false,
   onToggleAdminAgent,
   onOpenMarketplace,
+  billingEnabled = false,
   onOpenBilling,
   collapsed = false,
   onToggleCollapse,
@@ -400,26 +402,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
-        <div className="mb-1">
-          <button
-            type="button"
-            onClick={() => onOpenBilling?.()}
-            title="Billing"
-            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
-              billingActive
-                ? 'bg-cyan-50 text-cyan-700'
-                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-            } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
-          >
-            <CreditCard
-              size={17}
-              className={billingActive ? 'text-cyan-600' : 'text-slate-400'}
-            />
-            {!collapsed && (
-              <span className="flex-1 text-left">Billing</span>
-            )}
-          </button>
-        </div>
+        {billingEnabled && (
+          <div className="mb-1">
+            <button
+              type="button"
+              onClick={() => onOpenBilling?.()}
+              title="Billing"
+              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+                billingActive
+                  ? 'bg-cyan-50 text-cyan-700'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+              } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
+            >
+              <CreditCard
+                size={17}
+                className={billingActive ? 'text-cyan-600' : 'text-slate-400'}
+              />
+              {!collapsed && (
+                <span className="flex-1 text-left">Billing</span>
+              )}
+            </button>
+          </div>
+        )}
       </nav>
 
       {/* Bottom: Create + User */}

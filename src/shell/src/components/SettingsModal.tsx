@@ -160,6 +160,14 @@ export const SettingsModal: React.FC<Props> = ({
 
   const hasProfile = form.firstName || form.lastName || form.profession || form.department;
   const displayName = [form.firstName, form.lastName].filter(Boolean).join(' ') || 'Not set';
+  const toggleModule = (key: 'admissions' | 'adminAgent' | 'scribe' | 'billing') =>
+    setForm((prev) => ({
+      ...prev,
+      modules: {
+        ...(prev.modules || { admissions: false, adminAgent: false, scribe: true, billing: false }),
+        [key]: !(prev.modules?.[key] ?? false),
+      },
+    }));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
@@ -573,15 +581,7 @@ export const SettingsModal: React.FC<Props> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={() =>
-                      setForm((prev) => ({
-                        ...prev,
-                        modules: {
-                          ...(prev.modules || { admissions: false, adminAgent: false }),
-                          admissions: !(prev.modules?.admissions ?? false),
-                        },
-                      }))
-                    }
+                    onClick={() => toggleModule('admissions')}
                     className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
                       form.modules?.admissions
                         ? 'border-cyan-500 bg-cyan-500'
@@ -598,6 +598,86 @@ export const SettingsModal: React.FC<Props> = ({
                 </div>
               </div>
 
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Admin Agent</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Enable the admin assistant panel for document workflows and practice memory tasks.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleModule('adminAgent')}
+                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
+                      form.modules?.adminAgent
+                        ? 'border-cyan-500 bg-cyan-500'
+                        : 'border-slate-200 bg-white'
+                    }`}
+                    aria-pressed={form.modules?.adminAgent ?? false}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                        form.modules?.adminAgent ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Scribe</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Enable live consultation recording, note generation, and patient session history.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleModule('scribe')}
+                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
+                      form.modules?.scribe
+                        ? 'border-cyan-500 bg-cyan-500'
+                        : 'border-slate-200 bg-white'
+                    }`}
+                    aria-pressed={form.modules?.scribe ?? false}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                        form.modules?.scribe ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">Billing</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Enable the MediKredit billing tab and billing-specific patient workflows.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleModule('billing')}
+                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
+                      form.modules?.billing
+                        ? 'border-cyan-500 bg-cyan-500'
+                        : 'border-slate-200 bg-white'
+                    }`}
+                    aria-pressed={form.modules?.billing ?? false}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                        form.modules?.billing ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -608,7 +688,7 @@ export const SettingsModal: React.FC<Props> = ({
         templateTab !== normalizeUserSettings(settings || DEFAULT_SETTINGS).noteTemplate ||
         form.customTemplateContent !== normalizeUserSettings(settings || DEFAULT_SETTINGS).customTemplateContent ||
         form.templateId !== normalizeUserSettings(settings || DEFAULT_SETTINGS).templateId ||
-        (form.modules?.admissions ?? false) !== (normalizeUserSettings(settings || DEFAULT_SETTINGS).modules?.admissions ?? false) ||
+        JSON.stringify(form.modules || {}) !== JSON.stringify(normalizeUserSettings(settings || DEFAULT_SETTINGS).modules || {}) ||
         JSON.stringify(form.billing || {}) !== JSON.stringify(normalizeUserSettings(settings || DEFAULT_SETTINGS).billing || {}) ? (
           <div className="border-t border-slate-100 p-4 bg-slate-50 flex gap-3">
             <button

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import nodemailer from 'nodemailer';
 import { requireAuth } from '../middleware/requireAuth';
+import { requireFeature } from '../middleware/requireFeature';
 import { config } from '../config';
 import { getTemplates, generateNote } from '../services/haloApi';
 import {
@@ -25,7 +26,7 @@ function buildBaseName(fileName: string | undefined, fallback: string): string {
 }
 
 // POST /api/halo/templates
-router.post('/templates', async (req: Request, res: Response) => {
+router.post('/templates', requireFeature('scribe'), async (req: Request, res: Response) => {
   try {
     const userId = (req.body?.user_id as string) || config.haloUserId;
     const templates = await getTemplates(userId);
@@ -41,7 +42,7 @@ router.post('/templates', async (req: Request, res: Response) => {
 // Body: { user_id?, template_id?, text, return_type: 'note' | 'docx', patientId?, fileName?, useMobileConfig? }
 // If useMobileConfig is true, use config.haloMobileUserId and config.haloMobileTemplateId (for mobile preview).
 // If return_type === 'docx' and patientId is set, uploads DOCX to patient's Patient Notes folder and returns { success, fileId, name }.
-router.post('/generate-note', async (req: Request, res: Response) => {
+router.post('/generate-note', requireFeature('scribe'), async (req: Request, res: Response) => {
   try {
     const { user_id, template_id, text, return_type, patientId, fileName, useMobileConfig } = req.body as {
       user_id?: string;
@@ -103,7 +104,7 @@ router.post('/generate-note', async (req: Request, res: Response) => {
 
 // POST /api/halo/preview-note-pdf
 // Body: { user_id?, template_id?, text, patientId, fileName?, useMobileConfig? }
-router.post('/preview-note-pdf', async (req: Request, res: Response) => {
+router.post('/preview-note-pdf', requireFeature('scribe'), async (req: Request, res: Response) => {
   try {
     const { user_id, template_id, text, patientId, fileName, useMobileConfig } = req.body as {
       user_id?: string;
@@ -166,7 +167,7 @@ router.post('/preview-note-pdf', async (req: Request, res: Response) => {
 // POST /api/halo/confirm-and-send (mobile)
 // Body: { patientId, text, fileName?, patientName? }
 // Generates DOCX with mobile Halo config, saves to patient Patient Notes folder, emails DOCX to signed-in user from admin@halo.africa.
-router.post('/confirm-and-send', async (req: Request, res: Response) => {
+router.post('/confirm-and-send', requireFeature('scribe'), async (req: Request, res: Response) => {
   try {
     const { patientId, text, fileName, patientName } = req.body as {
       patientId?: string;

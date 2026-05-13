@@ -4,11 +4,12 @@ import { PatientWorkspace, type WorkspaceNavigationIntent } from './pages/Patien
 import { Toast } from './components/Toast';
 import { SettingsModal } from './components/SettingsModal';
 import { UploadHud } from './components/UploadHud';
-import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker } from './services/api';
+import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures } from './services/api';
 import { AdminAgentPanel } from 'halo-components/admin-agent-panel';
 import { AdminAgentOnboarding } from 'halo-components/admin-agent-onboarding';
 import { BillingPage } from 'halo-components/billing-page';
 import type { Patient, UserSettings, CalendarEvent } from '../../../shared/types';
+import type { EffectiveFeatureFlags } from '../../../shared/featureFlags';
 import type { StickerExtractedData } from './services/api';
 import type { UploadHudState } from './components/UploadHud';
 import { LogIn, Loader, X, UserPlus, Calendar, Users, AlertTriangle, Trash2, ScanLine, Loader2 } from 'lucide-react';
@@ -54,6 +55,7 @@ export const App = () => {
   // Settings / profile state
   const [showSettings, setShowSettings] = useState(false);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
+  const [effectiveFeatures, setEffectiveFeatures] = useState<EffectiveFeatureFlags | null>(null);
   const [userEmail, setUserEmail] = useState<string | undefined>();
   const [loginTime] = useState<number>(Date.now());
 
@@ -98,12 +100,20 @@ export const App = () => {
   }, [uploadHudState]);
 
   useEffect(() => {
-    if (userSettings?.modules?.admissions === false && activeMainView === 'admissions') {
+    const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
+    if (!admissionsEnabled && activeMainView === 'admissions') {
       setActiveMainView('workspace');
     }
-  }, [activeMainView, userSettings?.modules?.admissions]);
+  }, [activeMainView, effectiveFeatures?.admissions, userSettings?.modules?.admissions]);
 
-  const adminAgentEnabled = userSettings?.modules?.adminAgent ?? false;
+  useEffect(() => {
+    const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
+    if (!billingEnabled && activeMainView === 'billing') {
+      setActiveMainView('workspace');
+    }
+  }, [activeMainView, effectiveFeatures?.billing, userSettings?.modules?.billing]);
+
+  const adminAgentEnabled = effectiveFeatures?.adminAgent ?? (userSettings?.modules?.adminAgent ?? false);
 
   useEffect(() => {
     if (!adminAgentEnabled) {
@@ -193,6 +203,10 @@ export const App = () => {
           // Load settings in background
           loadSettings().then(res => {
             if (res.settings) setUserSettings(res.settings);
+          }).catch(() => {});
+
+          fetchEffectiveFeatures().then((res) => {
+            setEffectiveFeatures(res.effective);
           }).catch(() => {});
 
         }
@@ -325,6 +339,13 @@ export const App = () => {
   const handleSaveSettings = async (settings: UserSettings) => {
     await saveSettings(settings);
     setUserSettings(settings);
+    setEffectiveFeatures((prev) => ({
+      ...(prev || {}),
+      admissions: settings.modules?.admissions ?? false,
+      adminAgent: settings.modules?.adminAgent ?? false,
+      scribe: settings.modules?.scribe ?? true,
+      billing: settings.modules?.billing ?? false,
+    }));
     showToast('Settings saved.', 'success');
   };
 
@@ -387,7 +408,9 @@ export const App = () => {
   }
 
   const activePatient = patients.find(p => p.id === selectedPatientId);
-  const admissionsEnabled = userSettings?.modules?.admissions ?? false;
+  const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
+  const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
+  const scribeEnabled = effectiveFeatures?.scribe ?? (userSettings?.modules?.scribe ?? true);
   const hideSidebarOnMobile = activeMainView === 'workspace' && Boolean(selectedPatientId);
 
   return (
@@ -415,7 +438,8 @@ export const App = () => {
           adminAgentOpen={adminAgentOpen}
           onToggleAdminAgent={() => setAdminAgentOpen(prev => !prev)}
           onOpenMarketplace={() => setActiveMainView('marketplace')}
-          onOpenBilling={() => setActiveMainView('billing')}
+          billingEnabled={billingEnabled}
+          onOpenBilling={() => billingEnabled && setActiveMainView('billing')}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         />
@@ -454,7 +478,7 @@ export const App = () => {
             onToast={showToast}
             onOpenPatient={(patientId, options) => openPatientWorkspace(patientId, options)}
           />
-        ) : activeMainView === 'billing' ? (
+        ) : activeMainView === 'billing' && billingEnabled ? (
           <BillingPage
             onToast={showToast}
             patients={patients}
@@ -470,6 +494,7 @@ export const App = () => {
             onToast={showToast}
             templateId={userSettings?.templateId || 'clinical_note'}
             onUploadHudChange={setUploadHudState}
+            scribeEnabled={scribeEnabled}
             navigationIntent={workspaceIntent}
             onNavigationIntentHandled={(intentId) =>
               setWorkspaceIntent((current) => (current?.id === intentId ? null : current))

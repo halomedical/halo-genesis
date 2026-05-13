@@ -201,6 +201,7 @@ interface Props {
   onDataChange: () => void;
   onToast: (message: string, type: 'success' | 'error' | 'info') => void;
   templateId?: string;
+  scribeEnabled?: boolean;
   onUploadHudChange?: (state: UploadHudState | null) => void;
   calendarPrepEvent?: CalendarEvent | null;
   navigationIntent?: WorkspaceNavigationIntent | null;
@@ -213,6 +214,7 @@ export const PatientWorkspace: React.FC<Props> = ({
   onDataChange,
   onToast,
   templateId: propTemplateId,
+  scribeEnabled = true,
   onUploadHudChange,
   calendarPrepEvent,
   navigationIntent,
@@ -1017,11 +1019,24 @@ export const PatientWorkspace: React.FC<Props> = ({
     setNotes([]);
     setConsultSubTab('transcript');
     setDidCopyTranscript(false);
-    setActiveTab('notes');
-  }, []);
+    setActiveTab(scribeEnabled ? 'notes' : 'overview');
+  }, [scribeEnabled]);
+
+  useEffect(() => {
+    if (!scribeEnabled && (activeTab === 'notes' || activeTab === 'sessions')) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, scribeEnabled]);
 
   useEffect(() => {
     if (!navigationIntent?.id) return;
+
+    const blockedScribeTab = !scribeEnabled && (navigationIntent.tab === 'notes' || navigationIntent.tab === 'sessions');
+    if (blockedScribeTab) {
+      setActiveTab('overview');
+      onNavigationIntentHandled?.(navigationIntent.id);
+      return;
+    }
 
     if (navigationIntent.freshSession) {
       prepareFreshRecordingSession();
@@ -1030,7 +1045,7 @@ export const PatientWorkspace: React.FC<Props> = ({
     }
 
     onNavigationIntentHandled?.(navigationIntent.id);
-  }, [navigationIntent, onNavigationIntentHandled, prepareFreshRecordingSession]);
+  }, [navigationIntent, onNavigationIntentHandled, prepareFreshRecordingSession, scribeEnabled]);
 
   const handleLiveTranscriptUpdate = useCallback((segment: string) => {
     // While recording, keep the live segment separate so we can append it
@@ -1426,12 +1441,14 @@ export const PatientWorkspace: React.FC<Props> = ({
 
         <div className="flex flex-col items-center md:items-end gap-2 w-full md:w-auto">
           <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2">
-            <HeaderConsultationRecorder
-              onBeforeStart={prepareFreshRecordingSession}
-              onLiveTranscriptUpdate={handleLiveTranscriptUpdate}
-              onLiveStopped={handleLiveStopped}
-              onError={(msg: string) => onToast(msg, 'error')}
-            />
+            {scribeEnabled && (
+              <HeaderConsultationRecorder
+                onBeforeStart={prepareFreshRecordingSession}
+                onLiveTranscriptUpdate={handleLiveTranscriptUpdate}
+                onLiveStopped={handleLiveStopped}
+                onError={(msg: string) => onToast(msg, 'error')}
+              />
+            )}
             <button
               onClick={openUploadPicker}
               className="inline-flex h-14 min-w-[180px] items-center justify-center gap-2 rounded-[22px] border border-[#cfe3ef] bg-white px-5 text-sm font-semibold text-[#2f84b4] shadow-sm transition hover:border-[#9fd0e6] hover:bg-[#f2f9fd] hover:text-[#236f9b]"
@@ -1453,9 +1470,9 @@ export const PatientWorkspace: React.FC<Props> = ({
         <div className="mx-auto flex max-w-[1480px] gap-1 overflow-x-auto">
           {[
             { id: 'overview', label: 'Folder' },
-            { id: 'notes', label: 'Scribe' },
+            ...(scribeEnabled ? [{ id: 'notes', label: 'Scribe' }] : []),
             { id: 'chat', label: 'Agent' },
-            { id: 'sessions', label: 'History' },
+            ...(scribeEnabled ? [{ id: 'sessions', label: 'History' }] : []),
           ].map(tab => (
             <button
               key={tab.id}
