@@ -31,8 +31,11 @@ import {
 // Scheduler disabled; run-scheduler and scheduler-status kept for optional manual use
 import { runSchedulerNow, getSchedulerStatus } from '../jobs/scheduler';
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../shared/types';
+import { resolveEffectiveFeatureFlags } from '../../shared/featureFlags';
 import type { AdmissionsBoard, ScribeSession } from '../../shared/types';
 import { getVpsJwt, getVpsConfig, setVpsConfig } from '../services/vpsApi';
+import { loadExtensionRegistry } from '../services/extensionsRegistry';
+import { requireFeature } from '../middleware/requireFeature';
 
 const router = Router();
 router.use(requireAuth);
@@ -62,6 +65,26 @@ const BILLING_ELIGIBILITY_FILE_NAME = 'halo_billing_eligibility.json';
 // In-memory cache for first page of file list (per folder). Makes repeat views instant.
 const FILES_CACHE_TTL_MS = 30_000; // 30 seconds
 const filesListCache = new Map<string, { files: Array<{ id: string; name: string; mimeType: string; url: string; thumbnail?: string; createdTime: string }>; nextPage: string | null; cachedAt: number }>();
+
+const USER_SETTINGS_KEY = 'user_settings';
+const USER_SETTINGS_V2_MARKER = '__by_email__';
+
+function normalizeSettingsEmail(userEmail: string): string {
+  return String(userEmail || '').trim().toLowerCase();
+}
+
+function parseSettingsBlob(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function invalidateFilesCacheForFolder(folderId: string): void {
   for (const key of filesListCache.keys()) {
@@ -835,7 +858,7 @@ router.get('/files/:fileId/proxy', async (req: Request, res: Response) => {
 // --- SCRIBE SESSIONS PER PATIENT (JSON file in patient folder) ---
 
 // GET /patients/:id/sessions
-router.get('/patients/:id/sessions', async (req: Request, res: Response) => {
+router.get('/patients/:id/sessions', requireFeature('scribe'), async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const folderId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -866,7 +889,7 @@ router.get('/patients/:id/sessions', async (req: Request, res: Response) => {
 });
 
 // POST /patients/:id/sessions
-router.post('/patients/:id/sessions', async (req: Request, res: Response) => {
+router.post('/patients/:id/sessions', requireFeature('scribe'), async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const folderId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -1082,7 +1105,7 @@ async function findBillingEligibilityFile(token: string, patientFolderId: string
 // --- BILLING CLAIMS PER PATIENT ---
 
 // GET /patients/:id/billing-claims
-router.get('/patients/:id/billing-claims', async (req: Request, res: Response) => {
+router.get('/patients/:id/billing-claims', requireFeature('billing'), async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const folderId = getRouteParam(req.params.id);
@@ -1100,7 +1123,7 @@ router.get('/patients/:id/billing-claims', async (req: Request, res: Response) =
 });
 
 // POST /patients/:id/billing-claims
-router.post('/patients/:id/billing-claims', async (req: Request, res: Response) => {
+router.post('/patients/:id/billing-claims', requireFeature('billing'), async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const folderId = getRouteParam(req.params.id);
@@ -1146,7 +1169,7 @@ router.post('/patients/:id/billing-claims', async (req: Request, res: Response) 
 // --- BILLING ELIGIBILITY PER PATIENT ---
 
 // GET /patients/:id/billing-eligibility
-router.get('/patients/:id/billing-eligibility', async (req: Request, res: Response) => {
+router.get('/patients/:id/billing-eligibility', requireFeature('billing'), async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const folderId = getRouteParam(req.params.id);
@@ -1164,7 +1187,7 @@ router.get('/patients/:id/billing-eligibility', async (req: Request, res: Respon
 });
 
 // POST /patients/:id/billing-eligibility
-router.post('/patients/:id/billing-eligibility', async (req: Request, res: Response) => {
+router.post('/patients/:id/billing-eligibility', requireFeature('billing'), async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const folderId = getRouteParam(req.params.id);
@@ -1231,12 +1254,64 @@ router.get('/settings', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
-    const raw = await getVpsConfig(vpsJwt, 'user_settings');
-    const settings = raw ? normalizeUserSettings(JSON.parse(raw)) : DEFAULT_USER_SETTINGS;
+    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
+    const parsed = parseSettingsBlob(raw);
+    const emailKey = normalizeSettingsEmail(userEmail);
+
+    let settings = DEFAULT_USER_SETTINGS;
+    if (parsed) {
+      const byEmail = parsed[USER_SETTINGS_V2_MARKER];
+      if (byEmail && typeof byEmail === 'object') {
+        const emailSettings = (byEmail as Record<string, unknown>)[emailKey];
+        const legacySettings = (byEmail as Record<string, unknown>).__legacy__;
+        settings = normalizeUserSettings(
+          (emailSettings && typeof emailSettings === 'object')
+            ? (emailSettings as Record<string, unknown>)
+            : ((legacySettings && typeof legacySettings === 'object') ? (legacySettings as Record<string, unknown>) : undefined)
+        );
+      } else {
+        // Backward compatibility: legacy payload was a plain UserSettings object.
+        settings = normalizeUserSettings(parsed);
+      }
+    }
     res.json({ settings });
   } catch (err) {
     console.error('Load settings error:', err);
     res.status(500).json({ error: 'Failed to load settings.' });
+  }
+});
+
+// GET /features
+router.get('/features', async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const userEmail = req.session.userEmail!;
+    const vpsJwt = await getVpsJwt(token, userEmail);
+    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
+    const parsed = parseSettingsBlob(raw);
+    const emailKey = normalizeSettingsEmail(userEmail);
+
+    let settings = DEFAULT_USER_SETTINGS;
+    if (parsed) {
+      const byEmail = parsed[USER_SETTINGS_V2_MARKER];
+      if (byEmail && typeof byEmail === 'object') {
+        const emailSettings = (byEmail as Record<string, unknown>)[emailKey];
+        const legacySettings = (byEmail as Record<string, unknown>).__legacy__;
+        settings = normalizeUserSettings(
+          (emailSettings && typeof emailSettings === 'object')
+            ? (emailSettings as Record<string, unknown>)
+            : ((legacySettings && typeof legacySettings === 'object') ? (legacySettings as Record<string, unknown>) : undefined)
+        );
+      } else {
+        settings = normalizeUserSettings(parsed);
+      }
+    }
+    const registry = loadExtensionRegistry();
+    const effective = resolveEffectiveFeatureFlags(settings, registry);
+    res.json({ effective });
+  } catch (err) {
+    console.error('Load feature flags error:', err);
+    res.status(500).json({ error: 'Failed to load feature flags.' });
   }
 });
 
@@ -1251,7 +1326,26 @@ router.put('/settings', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
-    await setVpsConfig(vpsJwt, 'user_settings', JSON.stringify(settings));
+    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
+    const parsed = parseSettingsBlob(raw);
+    const emailKey = normalizeSettingsEmail(userEmail);
+
+    let nextBlob: Record<string, unknown>;
+    if (parsed && parsed[USER_SETTINGS_V2_MARKER] && typeof parsed[USER_SETTINGS_V2_MARKER] === 'object') {
+      nextBlob = parsed;
+    } else {
+      // Migrate legacy blob shape to v2.
+      nextBlob = {
+        [USER_SETTINGS_V2_MARKER]: {},
+      };
+      if (parsed) {
+        (nextBlob[USER_SETTINGS_V2_MARKER] as Record<string, unknown>).__legacy__ = parsed;
+      }
+    }
+
+    const byEmail = nextBlob[USER_SETTINGS_V2_MARKER] as Record<string, unknown>;
+    byEmail[emailKey] = settings;
+    await setVpsConfig(vpsJwt, USER_SETTINGS_KEY, JSON.stringify(nextBlob));
     res.json({ success: true });
   } catch (err) {
     console.error('Save settings error:', err);

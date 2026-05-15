@@ -1,17 +1,15 @@
-# Replace team slugs below with your exact GitHub teams.
-
 # Core defaults
-* @halomedical/platform-core
+* @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
 
 # Layer A shell/runtime and server remain core-owned
-/server/** @halomedical/platform-core
-/shared/** @halomedical/platform-core
-/src/shell/** @halomedical/platform-core
-/src/agent-executor/** @halomedical/platform-core
-/src/drive-adapter/** @halomedical/platform-core
-/supabase/** @halomedical/platform-core
-/registry/** @halomedical/platform-core
+/server/** @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
+/shared/** @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
+/src/shell/** @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
+/src/agent-executor/** @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
+/src/drive-adapter/** @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
+/supabase/** @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
+/registry/** @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
 
 # CI and governance
-/.github/** @halomedical/platform-core
-/README.md @halomedical/platform-core
+/.github/** @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo
+/README.md @CertifiedRamsey @halosytems-admin @dannelvanderwalt06-design @Thomas-debeer @noellevdw @nic748 @sachen-sudo

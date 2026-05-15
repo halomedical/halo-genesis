@@ -99,11 +99,15 @@ export interface UserBillingSettings {
 export interface UserModulesSettings {
   admissions: boolean;
   adminAgent: boolean;
+  scribe: boolean;
+  billing: boolean;
 }
 
 export const DEFAULT_USER_MODULES: UserModulesSettings = {
   admissions: false,
   adminAgent: false,
+  scribe: true,
+  billing: false,
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {

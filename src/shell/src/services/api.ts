@@ -1,4 +1,5 @@
 import { normalizeUserSettings } from '../../../../shared/types';
+import type { EffectiveFeatureFlags } from '../../../../shared/featureFlags';
 import type {
   AdmissionsBoard,
   Patient,
@@ -151,6 +152,8 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
 export const getLoginUrl = () => request<{ url: string }>('/api/auth/login-url');
 export const checkAuth = () => request<{ signedIn: boolean; email?: string }>('/api/auth/me');
 export const logout = () => request('/api/auth/logout', { method: 'POST' });
+export const fetchEffectiveFeatures = () =>
+  request<{ effective: EffectiveFeatureFlags }>('/api/drive/features');
 
 /** Run note conversion scheduler now (txt→docx after 10h, docx→pdf after 24h). Requires jobs to be due. */
 export const runSchedulerNow = () =>

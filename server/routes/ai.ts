@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/requireAuth';
+import { requireFeature } from '../middleware/requireFeature';
 import { generateText, generateTextStream, analyzeImage, transcribeAudio, safeJsonParse } from '../services/gemini';
 import { isDeepgramAvailable, transcribeWithDeepgram } from '../services/deepgram';
 import { fetchAllFilesInFolder, extractTextFromBuffer, extractTextFromFile } from '../services/drive';
@@ -425,7 +426,7 @@ router.post('/extract-sticker', async (req: Request, res: Response) => {
 });
 
 // POST /transcribe — returns transcript only (no SOAP/note generation; use Halo generate_note for notes)
-router.post('/transcribe', async (req: Request, res: Response) => {
+router.post('/transcribe', requireFeature('scribe'), async (req: Request, res: Response) => {
   try {
     const { audioBase64, mimeType } = req.body as {
       audioBase64?: string;

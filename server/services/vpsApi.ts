@@ -73,6 +73,12 @@ async function findInRoot(driveToken: string, rootId: string, name: string): Pro
   return data.files?.[0]?.id ?? null;
 }
 
+function credsFileNameForEmail(email: string): string {
+  const normalized = String(email || '').trim().toLowerCase();
+  const safe = normalized.replace(/[^a-z0-9@._-]/g, '_');
+  return `halo_vps_creds_${safe}.json`;
+}
+
 async function readDrive(driveToken: string, fileId: string): Promise<string> {
   const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${driveToken}` },
@@ -105,30 +111,43 @@ async function writeDrive(driveToken: string, rootId: string, existingId: string
   });
 }
 
-export async function loadVpsCreds(driveToken: string): Promise<VpsCreds | null> {
+export async function loadVpsCreds(driveToken: string, userEmail: string): Promise<VpsCreds | null> {
   try {
     const rootId = await getHaloRootFolder(driveToken);
-    const fileId = await findInRoot(driveToken, rootId, VPS_CREDS_FILE);
+    const namespaced = credsFileNameForEmail(userEmail);
+    let fileId = await findInRoot(driveToken, rootId, namespaced);
+
+    // Backward compatibility: allow one-time read from the legacy shared file.
+    if (!fileId) {
+      fileId = await findInRoot(driveToken, rootId, VPS_CREDS_FILE);
+    }
     if (!fileId) return null;
-    return JSON.parse(await readDrive(driveToken, fileId)) as VpsCreds;
+    const parsed = JSON.parse(await readDrive(driveToken, fileId)) as VpsCreds;
+    if (!parsed?.email) return null;
+    return parsed;
   } catch { return null; }
 }
 
-async function saveVpsCreds(driveToken: string, creds: VpsCreds): Promise<void> {
+async function saveVpsCreds(driveToken: string, userEmail: string, creds: VpsCreds): Promise<void> {
   const rootId = await getHaloRootFolder(driveToken);
-  const existingId = await findInRoot(driveToken, rootId, VPS_CREDS_FILE);
-  await writeDrive(driveToken, rootId, existingId, VPS_CREDS_FILE, JSON.stringify(creds));
+  const namespaced = credsFileNameForEmail(userEmail);
+  const existingId = await findInRoot(driveToken, rootId, namespaced);
+  await writeDrive(driveToken, rootId, existingId, namespaced, JSON.stringify(creds));
 }
 
 // Returns a valid VPS JWT for the user, provisioning if needed.
 export async function getVpsJwt(driveToken: string, userEmail: string): Promise<string> {
-  const existing = await loadVpsCreds(driveToken);
+  const existing = await loadVpsCreds(driveToken, userEmail);
 
-  if (existing && new Date(existing.jwtExpiresAt).getTime() > Date.now() + 60_000) {
+  if (
+    existing &&
+    existing.email.toLowerCase() === userEmail.toLowerCase() &&
+    new Date(existing.jwtExpiresAt).getTime() > Date.now() + 60_000
+  ) {
     return existing.jwt;
   }
 
-  if (existing) {
+  if (existing && existing.email.toLowerCase() === userEmail.toLowerCase()) {
     try {
       const refreshed = await loginDoctor(existing.email, existing.password);
       const updated: VpsCreds = {
@@ -136,7 +155,7 @@ export async function getVpsJwt(driveToken: string, userEmail: string): Promise<
         jwt: refreshed.access_token,
         jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
       };
-      await saveVpsCreds(driveToken, updated);
+      await saveVpsCreds(driveToken, userEmail, updated);
       return updated.jwt;
     } catch { /* fall through to re-provision */ }
   }
@@ -152,7 +171,7 @@ export async function getVpsJwt(driveToken: string, userEmail: string): Promise<
       jwt: adminJwt,
       jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
     };
-    await saveVpsCreds(driveToken, creds);
+    await saveVpsCreds(driveToken, userEmail, creds);
     return creds.jwt;
   }
 
@@ -175,7 +194,7 @@ export async function getVpsJwt(driveToken: string, userEmail: string): Promise<
     jwt: doctorJwt,
     jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
   };
-  await saveVpsCreds(driveToken, creds);
+  await saveVpsCreds(driveToken, userEmail, creds);
   return creds.jwt;
 }
 
