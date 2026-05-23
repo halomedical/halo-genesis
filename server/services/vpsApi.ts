@@ -1,3 +1,4 @@
+import { Request } from 'express';
 import { config } from '../config';
 import { driveRequest, getHaloRootFolder } from './drive';
 
@@ -40,43 +41,12 @@ async function vpsGet<T>(path: string, token: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// --- VPS Auth ---
-
-async function adminLogin(): Promise<string> {
-  const data = await vpsPost<VpsTokenResponse>('/auth/login', {
-    email: config.vpsAdminEmail,
-    password: config.vpsAdminPassword,
-  });
-  return data.access_token;
-}
-
-async function createInvite(adminJwt: string, email: string): Promise<string> {
-  const data = await vpsPost<{ token: string }>('/auth/invite', { email }, adminJwt);
-  return data.token;
-}
-
-async function registerDoctor(inviteToken: string, email: string, password: string, name: string): Promise<VpsTokenResponse> {
-  return vpsPost<VpsTokenResponse>('/auth/register', {
-    email, password, name, invite_token: inviteToken,
-  });
-}
-
-async function loginDoctor(email: string, password: string): Promise<VpsTokenResponse> {
-  return vpsPost<VpsTokenResponse>('/auth/login', { email, password });
-}
-
 // --- Drive-backed VPS creds store ---
 
 async function findInRoot(driveToken: string, rootId: string, name: string): Promise<string | null> {
   const q = encodeURIComponent(`'${rootId}' in parents and name='${name}' and trashed=false`);
   const data = await driveRequest(driveToken, `/files?q=${q}&fields=files(id)`) as { files?: Array<{ id: string }> };
   return data.files?.[0]?.id ?? null;
-}
-
-function credsFileNameForEmail(email: string): string {
-  const normalized = String(email || '').trim().toLowerCase();
-  const safe = normalized.replace(/[^a-z0-9@._-]/g, '_');
-  return `halo_vps_creds_${safe}.json`;
 }
 
 async function readDrive(driveToken: string, fileId: string): Promise<string> {
@@ -111,91 +81,61 @@ async function writeDrive(driveToken: string, rootId: string, existingId: string
   });
 }
 
-export async function loadVpsCreds(driveToken: string, userEmail: string): Promise<VpsCreds | null> {
+export async function loadVpsCreds(driveToken: string): Promise<VpsCreds | null> {
   try {
     const rootId = await getHaloRootFolder(driveToken);
-    const namespaced = credsFileNameForEmail(userEmail);
-    let fileId = await findInRoot(driveToken, rootId, namespaced);
-
-    // Backward compatibility: allow one-time read from the legacy shared file.
-    if (!fileId) {
-      fileId = await findInRoot(driveToken, rootId, VPS_CREDS_FILE);
-    }
+    const fileId = await findInRoot(driveToken, rootId, VPS_CREDS_FILE);
     if (!fileId) return null;
-    const parsed = JSON.parse(await readDrive(driveToken, fileId)) as VpsCreds;
-    if (!parsed?.email) return null;
-    return parsed;
+    return JSON.parse(await readDrive(driveToken, fileId)) as VpsCreds;
   } catch { return null; }
 }
 
-async function saveVpsCreds(driveToken: string, userEmail: string, creds: VpsCreds): Promise<void> {
+async function saveVpsCreds(driveToken: string, creds: VpsCreds): Promise<void> {
   const rootId = await getHaloRootFolder(driveToken);
-  const namespaced = credsFileNameForEmail(userEmail);
-  const existingId = await findInRoot(driveToken, rootId, namespaced);
-  await writeDrive(driveToken, rootId, existingId, namespaced, JSON.stringify(creds));
+  const existingId = await findInRoot(driveToken, rootId, VPS_CREDS_FILE);
+  await writeDrive(driveToken, rootId, existingId, VPS_CREDS_FILE, JSON.stringify(creds));
 }
 
-// Returns a valid VPS JWT for the user, provisioning if needed.
-export async function getVpsJwt(driveToken: string, userEmail: string): Promise<string> {
-  const existing = await loadVpsCreds(driveToken, userEmail);
-
-  if (
-    existing &&
-    existing.email.toLowerCase() === userEmail.toLowerCase() &&
-    new Date(existing.jwtExpiresAt).getTime() > Date.now() + 60_000
-  ) {
+// Returns a valid VPS JWT for the user.
+// Uses POST /auth/google — the VPS verifies the Google token and returns the
+// correct JWT for that user, creating the account if it doesn't exist yet.
+// The JWT is cached in Drive for 23 hours to avoid calling Google on every request.
+export async function getVpsJwt(
+  driveToken: string,
+  userEmail: string,
+  refreshToken?: string,
+): Promise<string> {
+  // Return cached JWT if it has at least 60 seconds of life left
+  const existing = await loadVpsCreds(driveToken);
+  if (existing && new Date(existing.jwtExpiresAt).getTime() > Date.now() + 60_000) {
     return existing.jwt;
   }
 
-  if (existing && existing.email.toLowerCase() === userEmail.toLowerCase()) {
-    try {
-      const refreshed = await loginDoctor(existing.email, existing.password);
-      const updated: VpsCreds = {
-        ...existing,
-        jwt: refreshed.access_token,
-        jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
-      };
-      await saveVpsCreds(driveToken, userEmail, updated);
-      return updated.jwt;
-    } catch { /* fall through to re-provision */ }
-  }
-
-  // First-time provision: admin creates invite, registers doctor
-  const adminJwt = await adminLogin();
-
-  // If doctor email is the admin account, just use admin JWT directly
-  if (userEmail === config.vpsAdminEmail) {
-    const creds: VpsCreds = {
-      email: userEmail,
-      password: config.vpsAdminPassword,
-      jwt: adminJwt,
-      jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
-    };
-    await saveVpsCreds(driveToken, userEmail, creds);
-    return creds.jwt;
-  }
-
-  const inviteToken = await createInvite(adminJwt, userEmail);
-  const password = `H${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}!`;
-
-  let doctorJwt: string;
-  try {
-    const registered = await registerDoctor(inviteToken, userEmail, password, userEmail.split('@')[0]);
-    doctorJwt = registered.access_token;
-  } catch (err) {
-    // User already exists — login directly with admin credentials as fallback
-    const loggedIn = await loginDoctor(config.vpsAdminEmail, config.vpsAdminPassword);
-    doctorJwt = loggedIn.access_token;
-  }
+  // Authenticate via the VPS Google endpoint — always returns the correct user's JWT
+  const storedRefresh = existing?.password ?? '';
+  const data = await vpsPost<VpsTokenResponse>('/auth/google', {
+    google_access_token: driveToken,
+    google_refresh_token: refreshToken ?? storedRefresh,
+    email: userEmail,
+    name: userEmail.split('@')[0],
+  });
 
   const creds: VpsCreds = {
     email: userEmail,
-    password,
-    jwt: doctorJwt,
+    password: refreshToken ?? storedRefresh,  // reuse password field to persist refresh token
+    jwt: data.access_token,
     jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
   };
-  await saveVpsCreds(driveToken, userEmail, creds);
-  return creds.jwt;
+  await saveVpsCreds(driveToken, creds).catch(() => {});
+  return data.access_token;
+}
+
+// Resolves the VPS JWT for the current request.
+// Prefers the session-level JWT (set at OAuth time) over the Drive-cached one,
+// ensuring every VPS call operates on the correct user's data.
+export async function resolveVpsJwt(req: Request): Promise<string> {
+  if (req.session.vpsJwt) return req.session.vpsJwt;
+  return getVpsJwt(req.session.accessToken!, req.session.userEmail!, req.session.refreshToken);
 }
 
 // --- Generic config helpers ---
