@@ -18,6 +18,7 @@ import {
   incrementTokenUsage,
   getAutomations,
   saveAutomations,
+  resolveVpsJwt,
 } from '../services/vpsApi';
 import type { Automation } from '../agent/capabilities';
 import { registerSession } from '../jobs/automationRunner';
@@ -30,6 +31,101 @@ const DRIVE_SUBFOLDER_NAMES = ['Black Hole', 'Patients', 'Review', 'Billing', 'A
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
 // --- Drive helpers ---
+
+function extractDriveFileId(url: string): string | null {
+  const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+async function getOrCreateLettersFolder(token: string, patientFolderId: string): Promise<string | null> {
+  try {
+    const q = encodeURIComponent(`'${patientFolderId}' in parents and name='Letters' and mimeType='${FOLDER_MIME}' and trashed=false`);
+    const existing = await driveRequest(token, `/files?q=${q}&fields=files(id)`) as { files?: Array<{ id: string }> };
+    if (existing.files?.[0]?.id) return existing.files[0].id;
+    const r = await fetch(`${config.driveApi}/files`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Letters', mimeType: FOLDER_MIME, parents: [patientFolderId] }),
+    });
+    const created = await r.json() as { id: string };
+    return created.id ?? null;
+  } catch { return null; }
+}
+
+async function moveDriveFile(token: string, fileId: string, newParentId: string): Promise<void> {
+  const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const meta = await metaRes.json() as { parents?: string[] };
+  const params = new URLSearchParams({ addParents: newParentId, fields: 'id' });
+  const removeParents = (meta.parents ?? []).join(',');
+  if (removeParents) params.set('removeParents', removeParents);
+  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?${params.toString()}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+}
+
+async function trashDriveFile(token: string, fileId: string): Promise<void> {
+  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trashed: true }),
+  });
+}
+
+async function labelGmailThread(token: string, threadId: string, labelName: string): Promise<void> {
+  const labelsRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/labels', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const labelsData = await labelsRes.json() as { labels?: Array<{ id: string; name: string }> };
+  let labelId = labelsData.labels?.find(l => l.name === labelName)?.id;
+  if (!labelId) {
+    const createRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/labels', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: labelName, labelListVisibility: 'labelShow', messageListVisibility: 'show' }),
+    });
+    const created = await createRes.json() as { id: string };
+    labelId = created.id;
+  }
+  await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/modify`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ addLabelIds: [labelId] }),
+  });
+}
+
+// Collect an SSE stream from VPS /agent/chat into a plain string.
+async function collectVpsStream(vpsRes: globalThis.Response): Promise<string> {
+  const reader = vpsRes.body?.getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(data) as string;
+            if (typeof parsed === 'string') fullText += parsed;
+          } catch { /* ignore malformed chunks */ }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return fullText.trim();
+}
 
 // --- Memory ---
 
@@ -51,15 +147,12 @@ function defaultMemory(settings: Record<string, string>): string {
 // GET /api/admin-agent/memory
 router.get('/memory', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const existing = await getVpsConfig(vpsJwt, 'agent_memory');
     if (existing) {
       res.json({ markdown: existing });
       return;
     }
-    // No memory yet — seed from user settings
     const settingsRaw = await getVpsConfig(vpsJwt, 'user_settings');
     let settings: Record<string, string> = {};
     if (settingsRaw) {
@@ -82,9 +175,7 @@ router.put('/memory', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'markdown is required.' });
       return;
     }
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     await setVpsConfig(vpsJwt, 'agent_memory', markdown);
     res.json({ success: true });
   } catch (err) {
@@ -95,17 +186,43 @@ router.put('/memory', async (req: Request, res: Response) => {
 
 // --- Tasks ---
 
+interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 interface AgentTask {
   id: string;
   title: string;
   done: boolean;
   createdAt: string;
   dueAt?: string | null;
+  // Taxonomy: category determines which pile the task lands in
   category?: 'agent' | 'doctor';
+  // Source: who/what created this task — used for card rendering and discard behaviour
+  source?: string | null;
   status?: 'running' | 'complete' | 'failed';
   completedAt?: string | null;
   actionUrl?: string | null;
   agentNote?: string | null;
+  // Drive file ID for direct file operations (approve/discard). Extracted from actionUrl if absent.
+  driveFileId?: string | null;
+  // Persisted discussion thread between doctor and agent on this specific task
+  conversation?: ConversationMessage[] | null;
+  // Patient metadata — populated by VPS; required for Approve filing flow
+  patientName?: string | null;
+  documentType?: string | null;
+  patientFolderId?: string | null;
+  // Black Hole approve routing fields
+  targetSubfolder?: string | null;
+  reviewFileId?: string | null;
+  reviewFormat?: string | null;
+  // Task type discriminator — drives VPS card-chat system prompt selection
+  taskType?: string | null;
+  // Email metadata — populated by email_monitor
+  emailFrom?: string | null;
+  emailSubject?: string | null;
+  threadId?: string | null;
 }
 
 function parseTasks(raw: unknown): AgentTask[] {
@@ -128,9 +245,7 @@ async function saveTasks(vpsJwt: string, tasks: AgentTask[]): Promise<void> {
 // GET /api/admin-agent/tasks
 router.get('/tasks', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     res.json({ tasks: await loadTasks(vpsJwt) });
   } catch (err) {
     console.error('Admin agent tasks GET error:', err);
@@ -141,10 +256,11 @@ router.get('/tasks', async (req: Request, res: Response) => {
 // POST /api/admin-agent/tasks
 router.post('/tasks', async (req: Request, res: Response) => {
   try {
-    const { title, dueAt, category, status, agentNote } = req.body as {
+    const { title, dueAt, category, source, status, agentNote } = req.body as {
       title?: string;
       dueAt?: string;
       category?: 'agent' | 'doctor';
+      source?: string;
       status?: 'running' | 'complete' | 'failed';
       agentNote?: string;
     };
@@ -152,9 +268,7 @@ router.post('/tasks', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'title is required.' });
       return;
     }
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const tasks = await loadTasks(vpsJwt);
     const task: AgentTask = {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
@@ -163,6 +277,7 @@ router.post('/tasks', async (req: Request, res: Response) => {
       createdAt: new Date().toISOString(),
       dueAt: dueAt || null,
       category: category || 'doctor',
+      source: source || 'manual',
       status: status || undefined,
       agentNote: agentNote || null,
     };
@@ -179,16 +294,16 @@ router.post('/tasks', async (req: Request, res: Response) => {
 router.patch('/tasks/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { done, title, status, agentNote, completedAt } = req.body as {
+    const { done, title, status, agentNote, completedAt, patientFolderId, patientName } = req.body as {
       done?: boolean;
       title?: string;
       status?: 'running' | 'complete' | 'failed';
       agentNote?: string;
       completedAt?: string;
+      patientFolderId?: string;
+      patientName?: string;
     };
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const tasks = await loadTasks(vpsJwt);
     const idx = tasks.findIndex(t => t.id === id);
     if (idx === -1) { res.status(404).json({ error: 'Task not found.' }); return; }
@@ -200,6 +315,8 @@ router.patch('/tasks/:id', async (req: Request, res: Response) => {
     if (status !== undefined) tasks[idx].status = status;
     if (agentNote !== undefined) tasks[idx].agentNote = agentNote;
     if (completedAt !== undefined) tasks[idx].completedAt = completedAt;
+    if (patientFolderId !== undefined) tasks[idx].patientFolderId = patientFolderId;
+    if (patientName !== undefined) tasks[idx].patientName = patientName;
     await saveTasks(vpsJwt, tasks);
     res.json({ task: tasks[idx] });
   } catch (err) {
@@ -212,9 +329,7 @@ router.patch('/tasks/:id', async (req: Request, res: Response) => {
 router.delete('/tasks/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const tasks = (await loadTasks(vpsJwt)).filter(t => t.id !== id);
     await saveTasks(vpsJwt, tasks);
     res.json({ success: true });
@@ -224,13 +339,260 @@ router.delete('/tasks/:id', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/admin-agent/tasks/:id/chat
+// Send a message on a specific task's conversation thread. Calls VPS agent with task context.
+router.post('/tasks/:id/chat', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { message } = req.body as { message?: string };
+    if (!message?.trim()) {
+      res.status(400).json({ error: 'message is required.' });
+      return;
+    }
+    const vpsJwt = await resolveVpsJwt(req);
+    const tasks = await loadTasks(vpsJwt);
+    const idx = tasks.findIndex(t => t.id === id);
+    if (idx === -1) { res.status(404).json({ error: 'Task not found.' }); return; }
+    const task = tasks[idx];
+    const conversation = task.conversation ?? [];
+
+    // Call VPS /agent/card-chat — a dedicated endpoint that loads the patient summary and
+    // current document content from Drive and builds a focused system prompt. Context is
+    // injected at the system level, not as a fake assistant history turn.
+    const fileId = task.driveFileId || (task.actionUrl ? extractDriveFileId(task.actionUrl) : null);
+
+    const vpsRes = await fetch(`${config.vpsBaseUrl}/agent/card-chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${vpsJwt}` },
+      body: JSON.stringify({
+        message: message.trim(),
+        history: conversation,
+        file_id: fileId,
+        patient_folder_id: task.patientFolderId ?? null,
+        patient_name: task.patientName ?? null,
+        document_type: task.documentType ?? null,
+        task_title: task.title,
+        task_type: task.taskType ?? null,
+      }),
+    });
+
+    let rawResponse = 'I couldn\'t process that. Please try again.';
+    if (vpsRes.ok) {
+      const text = await collectVpsStream(vpsRes);
+      if (text) rawResponse = text;
+    }
+
+    // Detect and strip [READY_TO_AMEND] token — it's a system signal, not conversation content
+    const readyToAmend = rawResponse.includes('[READY_TO_AMEND]');
+    const agentResponse = rawResponse.replace(/\[READY_TO_AMEND\]/g, '').replace(/\n{3,}/g, '\n\n').trim();
+
+    const updatedConversation: ConversationMessage[] = [
+      ...conversation,
+      { role: 'user', content: message.trim() },
+      { role: 'assistant', content: agentResponse },
+    ];
+
+    tasks[idx] = { ...task, conversation: updatedConversation };
+    await saveTasks(vpsJwt, tasks);
+    res.json({ response: agentResponse, readyToAmend, task: tasks[idx] });
+  } catch (err) {
+    console.error('Task chat error:', err);
+    res.status(500).json({ error: 'Task chat failed.' });
+  }
+});
+
+// POST /api/admin-agent/tasks/:id/amend
+// Calls VPS /agent/amend which reads the Drive file, regenerates it with Gemini using the full
+// conversation context, and overwrites the file in-place. No LLM chat turn is involved.
+router.post('/tasks/:id/amend', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const vpsJwt = await resolveVpsJwt(req);
+    const tasks = await loadTasks(vpsJwt);
+    const idx = tasks.findIndex(t => t.id === id);
+    if (idx === -1) { res.status(404).json({ error: 'Task not found.' }); return; }
+    const task = tasks[idx];
+
+    const fileId = task.driveFileId || (task.actionUrl ? extractDriveFileId(task.actionUrl) : null);
+    if (!fileId) {
+      res.status(400).json({ error: 'No Drive file linked to this task.' });
+      return;
+    }
+
+    const vpsRes = await fetch(`${config.vpsBaseUrl}/agent/amend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${vpsJwt}` },
+      body: JSON.stringify({
+        file_id: fileId,
+        conversation: task.conversation ?? [],
+        task_title: task.title,
+        document_type: task.documentType ?? null,
+        patient_name: task.patientName ?? null,
+      }),
+    });
+
+    if (!vpsRes.ok) {
+      const errText = await vpsRes.text().catch(() => '');
+      console.error(`[Amend] VPS /agent/amend ${vpsRes.status}: ${errText}`);
+      res.status(502).json({ error: 'Document amendment failed. Please try again.' });
+      return;
+    }
+
+    const data = await vpsRes.json() as { success: boolean; confirmation: string };
+    const confirmation = data.confirmation || 'Document updated ✓ — open to verify.';
+
+    const updatedConversation: ConversationMessage[] = [
+      ...(task.conversation ?? []),
+      { role: 'assistant', content: confirmation },
+    ];
+
+    tasks[idx] = { ...task, conversation: updatedConversation };
+    await saveTasks(vpsJwt, tasks);
+    res.json({ response: confirmation, task: tasks[idx] });
+  } catch (err) {
+    console.error('Task amend error:', err);
+    res.status(500).json({ error: 'Amendment failed.' });
+  }
+});
+
+// POST /api/admin-agent/tasks/:id/approve
+// Files the document to the patient's Letters subfolder, creates a To Do reminder, marks task complete.
+router.post('/tasks/:id/approve', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const token = req.session.accessToken!;
+    const vpsJwt = await resolveVpsJwt(req);
+    const tasks = await loadTasks(vpsJwt);
+    const idx = tasks.findIndex(t => t.id === id);
+    if (idx === -1) { res.status(404).json({ error: 'Task not found.' }); return; }
+    const task = tasks[idx];
+
+    // If patient folder is unknown, add a guiding question to the conversation and return early.
+    // The doctor answers via the card conversation, then taps Approve again once the folder is resolved.
+    if (!task.patientFolderId) {
+      const agentQuestion = 'To file this document, I need to link it to a patient folder. Which patient is this for?';
+      const updatedConversation: ConversationMessage[] = [
+        ...(task.conversation ?? []),
+        { role: 'assistant', content: agentQuestion },
+      ];
+      tasks[idx] = { ...task, conversation: updatedConversation };
+      await saveTasks(vpsJwt, tasks);
+      res.json({ needsPatient: true, task: tasks[idx] });
+      return;
+    }
+
+    // Call VPS to generate docx, file to Letters/, and trash the markdown draft.
+    // VPS reads the markdown, applies letterhead via docx_generator, uploads the polished
+    // docx to Halo/Patients/[folder]/Letters/, and returns the new document URL.
+    const fileId = task.driveFileId || (task.actionUrl ? extractDriveFileId(task.actionUrl) : null);
+    let filed = false;
+    let docxUrl: string | null = null;
+
+    if (fileId) {
+      try {
+        const vpsApproveRes = await fetch(`${config.vpsBaseUrl}/agent/approve-document`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${vpsJwt}` },
+          body: JSON.stringify({
+            file_id: fileId,
+            patient_folder_id: task.patientFolderId,
+            document_type: task.documentType ?? null,
+            patient_name: task.patientName ?? null,
+            review_format: task.reviewFormat ?? null,
+            target_subfolder: task.targetSubfolder ?? null,
+            task_id: task.id,
+          }),
+        });
+        if (vpsApproveRes.ok) {
+          const data = await vpsApproveRes.json() as { success: boolean; docx_url: string };
+          docxUrl = data.docx_url;
+          filed = true;
+        } else {
+          const errText = await vpsApproveRes.text().catch(() => '');
+          console.error(`[Approve] VPS /agent/approve-document ${vpsApproveRes.status}: ${errText}`);
+        }
+      } catch (err) {
+        console.error(`[Approve] VPS approve-document call failed:`, err);
+      }
+    }
+
+    tasks[idx] = { ...task, done: true, completedAt: new Date().toISOString(), status: 'complete' };
+
+    // Only create a "Send" reminder for referral requests — all other types file silently
+    if (task.documentType === 'REFERRAL_REQUEST') {
+      const reminderTitle = ['Send referral', task.patientName ? `— ${task.patientName}` : '']
+        .filter(Boolean).join(' ').trim();
+      const reminder: AgentTask = {
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        title: reminderTitle,
+        done: false,
+        createdAt: new Date().toISOString(),
+        category: 'doctor',
+        source: 'approve_flow',
+        agentNote: filed
+          ? `DOCX filed to ${task.targetSubfolder || 'Letters'} folder. Open to review before sending.`
+          : fileId
+            ? 'DOCX generation failed — check Review folder in Drive.'
+            : 'No Drive file found — check manually.',
+        actionUrl: docxUrl || task.actionUrl || null,
+        patientName: task.patientName || null,
+        patientFolderId: task.patientFolderId,
+      };
+      tasks.push(reminder);
+      await saveTasks(vpsJwt, tasks);
+      res.json({ success: true, filed, filedTo: task.targetSubfolder || null, reminder, task: tasks[idx] });
+    } else {
+      await saveTasks(vpsJwt, tasks);
+      res.json({ success: true, filed, filedTo: task.targetSubfolder || null, task: tasks[idx] });
+    }
+  } catch (err) {
+    console.error('Task approve error:', err);
+    res.status(500).json({ error: 'Failed to approve task.' });
+  }
+});
+
+// POST /api/admin-agent/tasks/:id/discard
+// Trashes the Drive file, labels the Gmail thread (if email-sourced), removes the task.
+router.post('/tasks/:id/discard', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const token = req.session.accessToken!;
+    const vpsJwt = await resolveVpsJwt(req);
+    const tasks = await loadTasks(vpsJwt);
+    const idx = tasks.findIndex(t => t.id === id);
+    if (idx === -1) { res.status(404).json({ error: 'Task not found.' }); return; }
+    const task = tasks[idx];
+
+    // Trash the Drive file
+    const fileId = task.driveFileId || (task.actionUrl ? extractDriveFileId(task.actionUrl) : null);
+    if (fileId) {
+      await trashDriveFile(token, fileId).catch(err =>
+        console.error(`[Discard] Drive trash failed for task ${id}:`, err)
+      );
+    }
+
+    // Label the Gmail thread so the email monitor skips it on future runs
+    if (task.threadId) {
+      await labelGmailThread(token, task.threadId, 'Halo-Discarded').catch(err =>
+        console.error(`[Discard] Gmail label failed for thread ${task.threadId}:`, err)
+      );
+    }
+
+    const updatedTasks = tasks.filter(t => t.id !== id);
+    await saveTasks(vpsJwt, updatedTasks);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Task discard error:', err);
+    res.status(500).json({ error: 'Failed to discard task.' });
+  }
+});
+
 // --- Connections ---
 
 // GET /api/admin-agent/connections
 router.get('/connections', async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail || '';
 
     let gmailConnected = false;
     try {
@@ -243,7 +605,7 @@ router.get('/connections', async (req: Request, res: Response) => {
 
     let onedriveConnected = false;
     try {
-      const vpsJwt = await getVpsJwt(token, userEmail);
+      const vpsJwt = await resolveVpsJwt(req);
       const status = await getOnedriveStatus(vpsJwt);
       onedriveConnected = status.connected;
     } catch { /* VPS not configured or unreachable */ }
@@ -263,11 +625,9 @@ router.get('/connections', async (req: Request, res: Response) => {
 
 router.post('/vps/provision', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     if (!userEmail) { res.status(400).json({ error: 'No user email in session.' }); return; }
-    const vpsJwt = await getVpsJwt(token, userEmail);
-    // Register session for automation runner
+    const vpsJwt = await resolveVpsJwt(req);
     if (req.session.refreshToken) {
       registerSession(userEmail, req.session.refreshToken);
     }
@@ -282,9 +642,7 @@ router.post('/vps/provision', async (req: Request, res: Response) => {
 
 router.get('/vps/billing-cap', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const cap = await getBillingCap(vpsJwt);
     res.json({ cap: cap ?? 500 });
   } catch (err) {
@@ -300,9 +658,7 @@ router.put('/vps/billing-cap', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'cap must be a number between 100 and 5000.' });
       return;
     }
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     await setBillingCap(vpsJwt, cap);
     res.json({ success: true, cap });
   } catch (err) {
@@ -313,9 +669,7 @@ router.put('/vps/billing-cap', async (req: Request, res: Response) => {
 
 router.post('/vps/setup-done', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     await markSetupDone(vpsJwt);
     res.json({ success: true });
   } catch (err) {
@@ -326,12 +680,9 @@ router.post('/vps/setup-done', async (req: Request, res: Response) => {
 
 // --- Tier ---
 
-// GET /api/admin-agent/tier
 router.get('/tier', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const tier = await getTier(vpsJwt);
     res.json({ tier });
   } catch (err) {
@@ -340,7 +691,6 @@ router.get('/tier', async (req: Request, res: Response) => {
   }
 });
 
-// PUT /api/admin-agent/tier
 router.put('/tier', async (req: Request, res: Response) => {
   try {
     const { tier } = req.body as { tier?: number };
@@ -348,9 +698,7 @@ router.put('/tier', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'tier must be 1, 2, or 3.' });
       return;
     }
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     await setTier(vpsJwt, tier);
     res.json({ success: true, tier });
   } catch (err) {
@@ -361,12 +709,9 @@ router.put('/tier', async (req: Request, res: Response) => {
 
 // --- Usage ---
 
-// GET /api/admin-agent/usage
 router.get('/usage', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const tierId = await getTier(vpsJwt);
     const usage = await getTokenUsage(vpsJwt, tierId);
     res.json({ ...usage, tier: tierId });
@@ -378,12 +723,9 @@ router.get('/usage', async (req: Request, res: Response) => {
 
 // --- Automations ---
 
-// GET /api/admin-agent/automations
 router.get('/automations', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const automations = await getAutomations(vpsJwt);
     res.json({ automations });
   } catch (err) {
@@ -392,7 +734,6 @@ router.get('/automations', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/admin-agent/automations
 router.post('/automations', async (req: Request, res: Response) => {
   try {
     const body = req.body as Partial<Automation>;
@@ -400,13 +741,21 @@ router.post('/automations', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'name and description are required.' });
       return;
     }
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const automations = await getAutomations(vpsJwt);
 
+    const resolvedId =
+      body.type === 'preset' && body.id
+        ? body.id
+        : `auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+    if (automations.some(a => a.id === resolvedId)) {
+      res.status(409).json({ error: 'An automation with this ID already exists.' });
+      return;
+    }
+
     const newAutomation: Automation = {
-      id: `auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      id: resolvedId,
       type: body.type || 'custom',
       name: body.name.trim(),
       description: body.description.trim(),
@@ -428,18 +777,32 @@ router.post('/automations', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /api/admin-agent/automations/:id
+// POST /api/admin-agent/automations/:id/run  (manual trigger)
+router.post('/automations/:id/run', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const vpsJwt = await resolveVpsJwt(req);
+
+    fetch(`${config.vpsBaseUrl}/agent/automation/run/${encodeURIComponent(id as string)}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${vpsJwt}` },
+    }).catch(err => console.error(`[AutomationRun] background call failed for ${id}:`, err));
+
+    res.json({ result: 'running', note: 'Automation started — check Tasks tab in 30–60 seconds.' });
+  } catch (err) {
+    console.error('Automation manual run error:', err);
+    res.status(500).json({ result: 'failed', note: String(err) });
+  }
+});
+
 router.patch('/automations/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const patch = req.body as Partial<Automation>;
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const automations = await getAutomations(vpsJwt);
     const idx = automations.findIndex(a => a.id === id);
     if (idx === -1) { res.status(404).json({ error: 'Automation not found.' }); return; }
-
     automations[idx] = { ...automations[idx], ...patch, id: id as string };
     await saveAutomations(vpsJwt, automations);
     res.json({ automation: automations[idx] });
@@ -449,13 +812,10 @@ router.patch('/automations/:id', async (req: Request, res: Response) => {
   }
 });
 
-// DELETE /api/admin-agent/automations/:id
 router.delete('/automations/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     let automations = await getAutomations(vpsJwt);
     automations = automations.filter(a => a.id !== id);
     await saveAutomations(vpsJwt, automations);
@@ -470,9 +830,7 @@ router.delete('/automations/:id', async (req: Request, res: Response) => {
 
 router.get('/onedrive/auth-url', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const authUrl = getOnedriveAuthUrl(vpsJwt);
     res.json({ authUrl });
   } catch (err) {
@@ -483,9 +841,7 @@ router.get('/onedrive/auth-url', async (req: Request, res: Response) => {
 
 router.get('/onedrive/status', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     const status = await getOnedriveStatus(vpsJwt);
     res.json(status);
   } catch (err) {
@@ -496,9 +852,7 @@ router.get('/onedrive/status', async (req: Request, res: Response) => {
 
 router.post('/onedrive/setup', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     await triggerOnedriveSetup(vpsJwt);
     res.json({ success: true });
   } catch (err) {
@@ -514,7 +868,6 @@ const PATIENT_SUBFOLDER_NAMES = ['Clerking Sheets', 'Letters', 'Radiology', 'Lab
 router.post('/drive-folders/setup', async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
     const rootId = await getHaloRootFolder(token);
     const folderIds: Record<string, string> = {};
 
@@ -538,9 +891,8 @@ router.post('/drive-folders/setup', async (req: Request, res: Response) => {
       })
     );
 
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     await setVpsConfig(vpsJwt, 'agent_folders', JSON.stringify(folderIds));
-
     res.json({ success: true, folderIds });
   } catch (err) {
     console.error('Drive folders setup error:', err);
@@ -548,12 +900,11 @@ router.post('/drive-folders/setup', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/admin-agent/patient-subfolders/:folderId — create standard subfolders for a patient
+// POST /api/admin-agent/patient-subfolders/:folderId
 router.post('/patient-subfolders/:folderId', async (req: Request, res: Response) => {
   try {
     const { folderId } = req.params;
     const token = req.session.accessToken!;
-
     const subfolderIds: Record<string, string> = {};
 
     await Promise.all(
@@ -576,7 +927,6 @@ router.post('/patient-subfolders/:folderId', async (req: Request, res: Response)
       })
     );
 
-    // Create _Summary.md if it doesn't exist
     const q = encodeURIComponent(`'${folderId}' in parents and name='_Summary.md' and trashed=false`);
     const existingSummary = await driveRequest(token, `/files?q=${q}&fields=files(id)`) as { files?: Array<{ id: string }> };
     if (!existingSummary.files?.[0]?.id) {
@@ -605,10 +955,7 @@ router.post('/patient-subfolders/:folderId', async (req: Request, res: Response)
 
 router.get('/morning-brief', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
-
+    const vpsJwt = await resolveVpsJwt(req);
     const [lastSeenRaw, tasks] = await Promise.all([
       getVpsConfig(vpsJwt, 'agent_last_seen'),
       loadTasks(vpsJwt),
@@ -656,9 +1003,7 @@ router.get('/morning-brief', async (req: Request, res: Response) => {
 
 router.post('/last-seen', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
+    const vpsJwt = await resolveVpsJwt(req);
     await setVpsConfig(vpsJwt, 'agent_last_seen', JSON.stringify({ lastSeenAt: new Date().toISOString() }));
     res.json({ success: true });
   } catch (err) {
@@ -672,12 +1017,7 @@ router.post('/last-seen', async (req: Request, res: Response) => {
 router.get('/patients/search', async (req: Request, res: Response) => {
   try {
     const q = (req.query.q as string || '').trim();
-    const token = req.session.accessToken!;
-    const userEmail = req.session.userEmail || '';
-    let vpsJwt = req.session.vpsJwt;
-    if (!vpsJwt) {
-      vpsJwt = await getVpsJwt(token, userEmail);
-    }
+    const vpsJwt = await resolveVpsJwt(req);
     const url = `${config.vpsBaseUrl}/agent/patients${q ? `?q=${encodeURIComponent(q)}` : ''}`;
     const vpsRes = await fetch(url, { headers: { Authorization: `Bearer ${vpsJwt}` } });
     if (!vpsRes.ok) {
@@ -712,28 +1052,20 @@ router.post('/chat', async (req: Request, res: Response) => {
       return;
     }
 
-    const token = req.session.accessToken!;
     const userEmail = req.session.userEmail || 'the doctor';
 
-    // Register session for automation runner (in-memory)
     if (req.session.refreshToken) {
       registerSession(userEmail, req.session.refreshToken);
     }
 
-    // Get VPS JWT — prefer the one stored at login time (google auth), fall back to password-based
-    let vpsJwt = req.session.vpsJwt;
-    if (!vpsJwt) {
-      vpsJwt = await getVpsJwt(token, userEmail);
-    }
+    const vpsJwt = await resolveVpsJwt(req);
 
-    // Persist session to VPS so automationRunner can reseed after restart (fire-and-forget)
     setVpsConfig(vpsJwt, 'automation_session', JSON.stringify({
       email: userEmail,
       refreshToken: req.session.refreshToken,
       lastSeen: new Date().toISOString(),
     })).catch(() => {});
 
-    // Proxy to VPS /agent/chat (SSE streaming)
     const vpsRes = await fetch(`${config.vpsBaseUrl}/agent/chat`, {
       method: 'POST',
       headers: {
