@@ -26,6 +26,7 @@ import {
   fetchPatientSessions,
   fetchPatientSummary,
   savePatientSession,
+  updatePatientFamily,
 } from '../services/api';
 import {
   Upload, Calendar, Clock, ChevronLeft, Loader2,
@@ -195,9 +196,16 @@ function parsePatientSummaryMarkdown(markdown: string): {
   return { lastUpdated, snapshot, timeline };
 }
 
+function extractSurname(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1].toLowerCase() : '';
+}
+
 interface Props {
   patient: Patient;
+  allPatients: Patient[];
   onBack: () => void;
+  onOpenPatient?: (patientId: string) => void;
   onDataChange: () => void;
   onToast: (message: string, type: 'success' | 'error' | 'info') => void;
   templateId?: string;
@@ -210,7 +218,9 @@ interface Props {
 
 export const PatientWorkspace: React.FC<Props> = ({
   patient,
+  allPatients,
   onBack,
+  onOpenPatient,
   onDataChange,
   onToast,
   templateId: propTemplateId,
@@ -274,6 +284,10 @@ export const PatientWorkspace: React.FC<Props> = ({
   const [editPlanCode, setEditPlanCode] = useState("");
   const [editMemberNumber, setEditMemberNumber] = useState("");
   const [editDependantCode, setEditDependantCode] = useState("");
+  const [editInitials, setEditInitials] = useState("");
+  const [editStatusIndicator, setEditStatusIndicator] = useState("");
+  const [editFamilyName, setEditFamilyName] = useState("");
+  const [editFamilyMemberIds, setEditFamilyMemberIds] = useState<string[]>([]);
 
   const [editingFile, setEditingFile] = useState<DriveFile | null>(null);
   const [editFileName, setEditFileName] = useState("");
@@ -314,6 +328,28 @@ export const PatientWorkspace: React.FC<Props> = ({
   const [notePreviewSignatures, setNotePreviewSignatures] = useState<Record<string, string>>({});
   const [noteViewModes, setNoteViewModes] = useState<Record<string, 'edit' | 'preview'>>({});
   const [previewLoadingNoteId, setPreviewLoadingNoteId] = useState<string | null>(null);
+
+  const allOtherPatients = allPatients.filter((candidate) => candidate.id !== patient.id);
+  const currentFamilyMembers = patient.familyGroupId
+    ? allOtherPatients.filter((candidate) => candidate.familyGroupId === patient.familyGroupId)
+    : [];
+  const currentFamilyMemberIds = currentFamilyMembers.map((candidate) => candidate.id);
+  const patientSurname = extractSurname(patient.name);
+  const suggestedSurnameMembers = allOtherPatients.filter((candidate) => {
+    if (!patientSurname) return false;
+    if (currentFamilyMemberIds.includes(candidate.id)) return false;
+    return extractSurname(candidate.name) === patientSurname;
+  });
+  const patientPlanHint = (patient.memberNumber || patient.medicalAidNumber || '').trim();
+  const suggestedPlanMembers = allOtherPatients.filter((candidate) => {
+    if (!patientPlanHint) return false;
+    if (currentFamilyMemberIds.includes(candidate.id)) return false;
+    if (suggestedSurnameMembers.some((item) => item.id === candidate.id)) return false;
+    return (
+      (candidate.memberNumber || '').trim() === patientPlanHint ||
+      (candidate.medicalAidNumber || '').trim() === patientPlanHint
+    );
+  });
 
   useEffect(() => {
     return () => {
@@ -1246,6 +1282,11 @@ export const PatientWorkspace: React.FC<Props> = ({
     setEditPlanCode(patient.planCode || "");
     setEditMemberNumber(patient.memberNumber || "");
     setEditDependantCode(patient.dependantCode || "");
+    setEditInitials(patient.initials || "");
+    setEditStatusIndicator(patient.statusIndicator || "");
+    const existingMemberIds = Array.from(new Set(currentFamilyMembers.map((member) => member.id)));
+    setEditFamilyMemberIds(existingMemberIds);
+    setEditFamilyName(patient.familyName || (patientSurname ? `${patientSurname.toUpperCase()} Family` : ''));
     setEditingBilling(true);
   };
 
@@ -1271,13 +1312,26 @@ export const PatientWorkspace: React.FC<Props> = ({
         planCode: editPlanCode,
         memberNumber: editMemberNumber,
         dependantCode: editDependantCode,
+        initials: editInitials,
+        statusIndicator: editStatusIndicator,
       });
+      await updatePatientFamily(
+        patient.id,
+        editFamilyMemberIds,
+        editFamilyName.trim() || undefined
+      );
       setEditingBilling(false);
       onDataChange();
       onToast('Billing details updated.', 'success');
     } catch (err) {
       onToast(getErrorMessage(err), 'error');
     }
+  };
+
+  const toggleFamilyMemberSelection = (memberId: string) => {
+    setEditFamilyMemberIds((prev) =>
+      prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
+    );
   };
 
   const startEditFile = (file: DriveFile) => {
@@ -1436,6 +1490,30 @@ export const PatientWorkspace: React.FC<Props> = ({
                 <CreditCard className="w-3.5 h-3.5" /> Billing details
               </button>
             </div>
+            {currentFamilyMembers.length > 0 ? (
+              <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-700">
+                  Family folder{patient.familyName ? `: ${patient.familyName}` : ''}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {[patient, ...currentFamilyMembers].map((member) => (
+                    <button
+                      key={member.id}
+                      type="button"
+                      onClick={() => onOpenPatient?.(member.id)}
+                      disabled={!onOpenPatient || member.id === patient.id}
+                      className={`rounded-full border px-2.5 py-1 text-xs ${
+                        member.id === patient.id
+                          ? 'border-sky-200 bg-white text-sky-700'
+                          : 'border-sky-200 bg-white text-slate-700 hover:border-sky-400 hover:text-sky-700'
+                      }`}
+                    >
+                      {member.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -2208,6 +2286,104 @@ export const PatientWorkspace: React.FC<Props> = ({
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition"
                   />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">
+                    Patient Initials
+                  </label>
+                  <input
+                    type="text"
+                    value={editInitials}
+                    onChange={(e) => setEditInitials(e.target.value.toUpperCase())}
+                    placeholder="e.g. JD"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">
+                    Status Indicator
+                  </label>
+                  <input
+                    type="text"
+                    value={editStatusIndicator}
+                    onChange={(e) => setEditStatusIndicator(e.target.value.toUpperCase())}
+                    placeholder="e.g. A"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition"
+                  />
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Family folder</p>
+                <div className="mt-2">
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">
+                    Family folder name
+                  </label>
+                  <input
+                    type="text"
+                    value={editFamilyName}
+                    onChange={(e) => setEditFamilyName(e.target.value)}
+                    placeholder="e.g. Sunny Family"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition"
+                  />
+                </div>
+                {suggestedSurnameMembers.length > 0 ? (
+                  <div className="mt-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Suggested by surname</p>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {suggestedSurnameMembers.map((member) => (
+                        <button
+                          key={member.id}
+                          type="button"
+                          onClick={() => toggleFamilyMemberSelection(member.id)}
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 hover:border-sky-400 hover:text-sky-700"
+                        >
+                          + {member.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {suggestedPlanMembers.length > 0 ? (
+                  <div className="mt-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Suggested by plan/member</p>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {suggestedPlanMembers.map((member) => (
+                        <button
+                          key={member.id}
+                          type="button"
+                          onClick={() => toggleFamilyMemberSelection(member.id)}
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 hover:border-sky-400 hover:text-sky-700"
+                        >
+                          + {member.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="mt-3 max-h-36 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 px-1 pb-1">Manual members</p>
+                  {allOtherPatients.length === 0 ? (
+                    <p className="px-1 py-2 text-xs text-slate-500">No other patients available.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {allOtherPatients.map((member) => (
+                        <label key={member.id} className="flex items-center gap-2 rounded px-1.5 py-1 text-sm text-slate-700 hover:bg-slate-50">
+                          <input
+                            type="checkbox"
+                            checked={editFamilyMemberIds.includes(member.id)}
+                            onChange={() => toggleFamilyMemberSelection(member.id)}
+                            className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                          />
+                          <span className="truncate">{member.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Same-surname and same-plan suggestions help, but you can manually add any patient to the family folder.
+                </p>
               </div>
               <div className="flex gap-3 pt-2">
                 <button

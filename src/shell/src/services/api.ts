@@ -262,6 +262,11 @@ export interface PatientBillingPayload {
   planCode?: string;
   memberNumber?: string;
   dependantCode?: string;
+  initials?: string;
+  statusIndicator?: string;
+  familyGroupId?: string;
+  familyName?: string;
+  familyMemberIds?: string[];
 }
 
 export interface PatientCreatePayload extends PatientBillingPayload {
@@ -313,8 +318,49 @@ export const updatePatient = (id: string, updates: PatientUpdatePayload) =>
     body: JSON.stringify(updates),
   });
 
+export interface PatientFamilyUpdateResponse {
+  success: boolean;
+  familyGroupId: string | null;
+  familyName: string | null;
+  members: Patient[];
+}
+
+export const updatePatientFamily = (
+  id: string,
+  memberIds: string[],
+  familyName?: string
+) =>
+  request<PatientFamilyUpdateResponse>(`/api/drive/patients/${id}/family`, {
+    method: 'POST',
+    body: JSON.stringify({ memberIds, familyName }),
+  });
+
 export const deletePatient = (id: string) =>
   request(`/api/drive/patients/${id}`, { method: 'DELETE' });
+
+export interface PatientImportSummaryItem {
+  name: string;
+  memberNumber?: string;
+  dependantCode?: string;
+  idNumber?: string;
+  reason: string;
+}
+
+export interface PatientImportResponse {
+  total: number;
+  createdCount: number;
+  skippedCount: number;
+  failedCount: number;
+  created: PatientImportSummaryItem[];
+  skipped: PatientImportSummaryItem[];
+  failed: PatientImportSummaryItem[];
+}
+
+export const importPatientsJson = (payload: unknown) =>
+  request<PatientImportResponse>('/api/drive/patients/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 
 // --- SCRIBE SESSIONS (per patient) ---
 

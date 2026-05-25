@@ -667,6 +667,11 @@ export function parseFolderString(folderName: string): { pName: string; pDob: st
 }
 
 export function parsePatientFolder(f: DriveFileRaw) {
+  const familyMemberIds = (f.appProperties?.familyMemberIds || '')
+    .split(',')
+    .map((value) => sanitizeString(value, 128))
+    .filter(Boolean);
+
   let pName = f.appProperties?.patientName;
   let pDob = f.appProperties?.patientDob;
   let pSex = f.appProperties?.patientSex;
@@ -703,5 +708,10 @@ export function parsePatientFolder(f: DriveFileRaw) {
     planCode: f.appProperties?.planCode || undefined,
     memberNumber: f.appProperties?.memberNumber || undefined,
     dependantCode: f.appProperties?.dependantCode || undefined,
+    initials: f.appProperties?.initials || undefined,
+    statusIndicator: f.appProperties?.statusIndicator || undefined,
+    familyGroupId: f.appProperties?.familyGroupId || undefined,
+    familyName: f.appProperties?.familyName || undefined,
+    familyMemberIds: familyMemberIds.length ? Array.from(new Set(familyMemberIds)) : undefined,
   };
 }
