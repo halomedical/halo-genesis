@@ -16,6 +16,11 @@ export interface Patient {
   planCode?: string;
   memberNumber?: string;
   dependantCode?: string;
+  initials?: string;
+  statusIndicator?: string;
+  familyGroupId?: string;
+  familyName?: string;
+  familyMemberIds?: string[];
 }
 
 export interface DriveFile {

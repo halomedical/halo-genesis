@@ -120,6 +120,132 @@ function getRouteParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] : value || '';
 }
 
+interface ImportCandidate {
+  name: string;
+  dob: string;
+  sex: 'M' | 'F';
+  medicalAid?: string;
+  medicalAidPlan?: string;
+  medicalAidNumber?: string;
+  folderNumber?: string;
+  idNumber?: string;
+  schemeCode?: string;
+  planCode?: string;
+  memberNumber?: string;
+  dependantCode?: string;
+  initials?: string;
+  statusIndicator?: string;
+  familyGroupId?: string;
+  familyName?: string;
+  familyMemberIds?: string[];
+}
+
+interface ImportSummaryRow {
+  name: string;
+  memberNumber?: string;
+  dependantCode?: string;
+  idNumber?: string;
+  reason: string;
+}
+
+function convertYyyyMmDdToIso(value: string): string {
+  const compact = value.trim();
+  if (!/^\d{8}$/.test(compact)) return '';
+  return `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
+}
+
+function inferSexFromIdNumber(idNumber: string): 'M' | 'F' {
+  const clean = idNumber.trim();
+  if (!/^\d{13}$/.test(clean)) return 'M';
+  const sequence = Number(clean.slice(6, 10));
+  return sequence >= 5000 ? 'M' : 'F';
+}
+
+function normalizeDependantCode(value: string): string {
+  const digits = value.trim().replace(/\D+/g, '');
+  if (!digits) return '';
+  return digits.padStart(2, '0').slice(-2);
+}
+
+function normalizeFamilyMemberIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((item) => sanitizeString(item, 128))
+        .filter(Boolean)
+    )
+  );
+}
+
+function statusToIndicator(statusText: string): string {
+  const status = statusText.trim().toUpperCase();
+  if (status.startsWith('ACTIVE')) return 'A';
+  if (status.startsWith('RESIGNED')) return 'R';
+  if (status.startsWith('SUSPENDED')) return 'S';
+  return status.charAt(0) || '';
+}
+
+function parseGeneralTestMemberRow(row: string): ImportCandidate | null {
+  const trimmed = row.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\S+)\s+(\d+)\s+(.+?)\s+([A-Z]{1,5})\s+(.+?)\s+(\d{8})\s+(\d{13})\s+(.+)$/);
+  if (!match) return null;
+
+  const [, memberNumber, depCode, firstName, initials, surname, dobCompact, idNumber, statusText] = match;
+  const dob = convertYyyyMmDdToIso(dobCompact);
+  if (!dob) return null;
+
+  return {
+    name: `${firstName.trim()} ${surname.trim()}`,
+    dob,
+    sex: inferSexFromIdNumber(idNumber),
+    medicalAid: 'MediKredit Test',
+    medicalAidNumber: memberNumber,
+    memberNumber,
+    dependantCode: normalizeDependantCode(depCode),
+    idNumber,
+    initials,
+    statusIndicator: statusToIndicator(statusText),
+  };
+}
+
+function toImportCandidate(raw: unknown): ImportCandidate | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const input = raw as Record<string, unknown>;
+
+  if (typeof input.row === 'string') {
+    return parseGeneralTestMemberRow(input.row);
+  }
+
+  const name = sanitizeString(input.name);
+  const dob = sanitizeString(input.dob);
+  const sexRaw = sanitizeString(input.sex).toUpperCase();
+  const sex = sexRaw === 'F' ? 'F' : 'M';
+
+  if (!name || !dob || !isValidDate(dob)) return null;
+
+  return {
+    name,
+    dob,
+    sex,
+    medicalAid: sanitizeString(input.medicalAid),
+    medicalAidPlan: sanitizeString(input.medicalAidPlan),
+    medicalAidNumber: sanitizeString(input.medicalAidNumber),
+    folderNumber: sanitizeString(input.folderNumber),
+    idNumber: sanitizeString(input.idNumber),
+    schemeCode: sanitizeString(input.schemeCode),
+    planCode: sanitizeString(input.planCode),
+    memberNumber: sanitizeString(input.memberNumber),
+    dependantCode: normalizeDependantCode(sanitizeString(input.dependantCode)),
+    initials: sanitizeString(input.initials),
+    statusIndicator: sanitizeString(input.statusIndicator),
+    familyGroupId: sanitizeString(input.familyGroupId, 128),
+    familyName: sanitizeString(input.familyName, 160),
+    familyMemberIds: normalizeFamilyMemberIds(input.familyMemberIds),
+  };
+}
+
 // --- Routes ---
 
 // GET /patients?page=<token>&pageSize=<number>
@@ -219,6 +345,171 @@ router.get('/scheduler-status', async (_req: Request, res: Response) => {
   }
 });
 
+// POST /patients/import
+router.post('/patients/import', async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const rootId = await getHaloRootFolder(token);
+    const body = (req.body || {}) as Record<string, unknown>;
+
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    const patients = Array.isArray(body.patients) ? body.patients : [];
+
+    const parsedFromRows = rows
+      .filter((row): row is string => typeof row === 'string')
+      .map((row) => parseGeneralTestMemberRow(row))
+      .filter((candidate): candidate is ImportCandidate => Boolean(candidate));
+
+    const parsedFromPatients = patients
+      .map((item) => toImportCandidate(item))
+      .filter((candidate): candidate is ImportCandidate => Boolean(candidate));
+
+    const candidates = [...parsedFromRows, ...parsedFromPatients];
+    if (candidates.length === 0) {
+      res.status(400).json({ error: 'No valid patients found in payload. Provide rows[] and/or patients[].' });
+      return;
+    }
+
+    const existingPatients: ReturnType<typeof parsePatientFolder>[] = [];
+    let pageToken: string | undefined;
+    do {
+      let url = `/files?q=${encodeURIComponent(
+        `'${rootId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+      )}&fields=files(id,name,appProperties,createdTime),nextPageToken&pageSize=100`;
+      if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+      const page = await driveRequest(token, url);
+      for (const file of page.files || []) {
+        existingPatients.push(parsePatientFolder(file));
+      }
+      pageToken = page.nextPageToken || undefined;
+    } while (pageToken);
+
+    const created: ImportSummaryRow[] = [];
+    const skipped: ImportSummaryRow[] = [];
+    const failed: ImportSummaryRow[] = [];
+
+    const isDuplicate = (candidate: ImportCandidate): boolean => {
+      const member = (candidate.memberNumber || '').trim();
+      const dep = normalizeDependantCode(candidate.dependantCode || '');
+      const idNumber = (candidate.idNumber || '').trim();
+      return existingPatients.some((current) => {
+        const currentMember = (current.memberNumber || '').trim();
+        const currentDep = normalizeDependantCode(current.dependantCode || '');
+        const currentId = (current.idNumber || '').trim();
+        const memberMatch = !!member && !!dep && currentMember === member && currentDep === dep;
+        const idMatch = !!idNumber && currentId === idNumber;
+        return memberMatch || idMatch;
+      });
+    };
+
+    for (const candidate of candidates) {
+      const summaryBase = {
+        name: candidate.name,
+        memberNumber: candidate.memberNumber,
+        dependantCode: candidate.dependantCode,
+        idNumber: candidate.idNumber,
+      };
+
+      if (!candidate.name || !candidate.dob || !isValidDate(candidate.dob) || !isValidSex(candidate.sex)) {
+        failed.push({ ...summaryBase, reason: 'Invalid required fields (name, dob, sex).' });
+        continue;
+      }
+
+      if (isDuplicate(candidate)) {
+        skipped.push({ ...summaryBase, reason: 'Already exists (idNumber or member+dependant).' });
+        continue;
+      }
+
+      try {
+        const folder = await driveRequest(token, '/files', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: `${candidate.name}__${candidate.dob}__${candidate.sex}`,
+            parents: [rootId],
+            mimeType: 'application/vnd.google-apps.folder',
+            appProperties: {
+              type: 'patient_folder',
+              patientName: candidate.name,
+              patientDob: candidate.dob,
+              patientSex: candidate.sex,
+              ...(candidate.medicalAid ? { medicalAid: candidate.medicalAid } : {}),
+              ...(candidate.medicalAidPlan ? { medicalAidPlan: candidate.medicalAidPlan } : {}),
+              ...(candidate.medicalAidNumber ? { medicalAidNumber: candidate.medicalAidNumber } : {}),
+              ...(candidate.folderNumber ? { folderNumber: candidate.folderNumber } : {}),
+              ...(candidate.idNumber ? { idNumber: candidate.idNumber } : {}),
+              ...(candidate.schemeCode ? { schemeCode: candidate.schemeCode } : {}),
+              ...(candidate.planCode ? { planCode: candidate.planCode } : {}),
+              ...(candidate.memberNumber ? { memberNumber: candidate.memberNumber } : {}),
+              ...(candidate.dependantCode ? { dependantCode: candidate.dependantCode } : {}),
+              ...(candidate.initials ? { initials: candidate.initials } : {}),
+              ...(candidate.statusIndicator ? { statusIndicator: candidate.statusIndicator } : {}),
+              ...(candidate.familyGroupId ? { familyGroupId: candidate.familyGroupId } : {}),
+              ...(candidate.familyName ? { familyName: candidate.familyName } : {}),
+              ...(candidate.familyMemberIds?.length ? { familyMemberIds: candidate.familyMemberIds.join(',') } : {}),
+            },
+          }),
+        });
+        const folderId = sanitizeString((folder as { id?: unknown }).id);
+        if (!folderId) {
+          throw new Error('Drive did not return a folder id.');
+        }
+
+        const subfolderNames = ['Clerking Sheets', 'Letters', 'Radiology', 'Labs', 'Scanned Documents', 'Subspecialist Referral'];
+        const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+        Promise.all(
+          subfolderNames.map((sfName) =>
+            fetch(`${driveApi}/files`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: sfName, mimeType: FOLDER_MIME_TYPE, parents: [folderId] }),
+            }).catch(() => {})
+          )
+        ).catch(() => {});
+
+        existingPatients.push({
+          id: folderId,
+          name: candidate.name,
+          dob: candidate.dob,
+          sex: candidate.sex,
+          lastVisit: new Date().toISOString().slice(0, 10),
+          alerts: [],
+          medicalAid: candidate.medicalAid,
+          medicalAidPlan: candidate.medicalAidPlan,
+          medicalAidNumber: candidate.medicalAidNumber,
+          folderNumber: candidate.folderNumber,
+          idNumber: candidate.idNumber,
+          schemeCode: candidate.schemeCode,
+          planCode: candidate.planCode,
+          memberNumber: candidate.memberNumber,
+          dependantCode: candidate.dependantCode,
+          initials: candidate.initials,
+          statusIndicator: candidate.statusIndicator,
+          familyGroupId: candidate.familyGroupId,
+          familyName: candidate.familyName,
+          familyMemberIds: candidate.familyMemberIds?.length ? candidate.familyMemberIds : undefined,
+        });
+        created.push({ ...summaryBase, reason: 'Created.' });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        failed.push({ ...summaryBase, reason: `Create failed: ${message}` });
+      }
+    }
+
+    res.json({
+      total: candidates.length,
+      createdCount: created.length,
+      skippedCount: skipped.length,
+      failedCount: failed.length,
+      created,
+      skipped,
+      failed,
+    });
+  } catch (err) {
+    console.error('Import patients error:', err);
+    res.status(500).json({ error: 'Failed to import patients.' });
+  }
+});
+
 // POST /patients
 router.post('/patients', async (req: Request, res: Response) => {
   try {
@@ -234,6 +525,11 @@ router.post('/patients', async (req: Request, res: Response) => {
     const planCode = sanitizeString(req.body.planCode);
     const memberNumber = sanitizeString(req.body.memberNumber);
     const dependantCode = sanitizeString(req.body.dependantCode);
+    const initials = sanitizeString(req.body.initials);
+    const statusIndicator = sanitizeString(req.body.statusIndicator);
+    const familyGroupId = sanitizeString(req.body.familyGroupId, 128);
+    const familyName = sanitizeString(req.body.familyName, 160);
+    const familyMemberIds = normalizeFamilyMemberIds(req.body.familyMemberIds);
 
     if (!name || name.length < 2) {
       res.status(400).json({ error: 'Patient name must be at least 2 characters.' });
@@ -271,6 +567,11 @@ router.post('/patients', async (req: Request, res: Response) => {
           ...(planCode ? { planCode } : {}),
           ...(memberNumber ? { memberNumber } : {}),
           ...(dependantCode ? { dependantCode } : {}),
+          ...(initials ? { initials } : {}),
+          ...(statusIndicator ? { statusIndicator } : {}),
+          ...(familyGroupId ? { familyGroupId } : {}),
+          ...(familyName ? { familyName } : {}),
+          ...(familyMemberIds.length ? { familyMemberIds: familyMemberIds.join(',') } : {}),
         },
       }),
     });
@@ -317,6 +618,11 @@ router.post('/patients', async (req: Request, res: Response) => {
       planCode: planCode || undefined,
       memberNumber: memberNumber || undefined,
       dependantCode: dependantCode || undefined,
+      initials: initials || undefined,
+      statusIndicator: statusIndicator || undefined,
+      familyGroupId: familyGroupId || undefined,
+      familyName: familyName || undefined,
+      familyMemberIds: familyMemberIds.length ? familyMemberIds : undefined,
     });
   } catch (err) {
     console.error('Create patient error:', err);
@@ -365,6 +671,21 @@ router.patch('/patients/:id', async (req: Request, res: Response) => {
       : undefined;
     const dependantCode = hasOwnField(body, 'dependantCode')
       ? sanitizeString(body.dependantCode)
+      : undefined;
+    const initials = hasOwnField(body, 'initials')
+      ? sanitizeString(body.initials)
+      : undefined;
+    const statusIndicator = hasOwnField(body, 'statusIndicator')
+      ? sanitizeString(body.statusIndicator)
+      : undefined;
+    const familyGroupId = hasOwnField(body, 'familyGroupId')
+      ? sanitizeString(body.familyGroupId, 128)
+      : undefined;
+    const familyName = hasOwnField(body, 'familyName')
+      ? sanitizeString(body.familyName, 160)
+      : undefined;
+    const familyMemberIds = hasOwnField(body, 'familyMemberIds')
+      ? normalizeFamilyMemberIds(body.familyMemberIds)
       : undefined;
 
     if (name !== undefined && name.length < 2) {
@@ -417,6 +738,11 @@ router.patch('/patients/:id', async (req: Request, res: Response) => {
     if (hasOwnField(body, 'planCode')) nextAppProperties.planCode = planCode || '';
     if (hasOwnField(body, 'memberNumber')) nextAppProperties.memberNumber = memberNumber || '';
     if (hasOwnField(body, 'dependantCode')) nextAppProperties.dependantCode = dependantCode || '';
+    if (hasOwnField(body, 'initials')) nextAppProperties.initials = initials || '';
+    if (hasOwnField(body, 'statusIndicator')) nextAppProperties.statusIndicator = statusIndicator || '';
+    if (hasOwnField(body, 'familyGroupId')) nextAppProperties.familyGroupId = familyGroupId || '';
+    if (hasOwnField(body, 'familyName')) nextAppProperties.familyName = familyName || '';
+    if (hasOwnField(body, 'familyMemberIds')) nextAppProperties.familyMemberIds = familyMemberIds?.join(',') || '';
 
     await fetch(`${driveApi}/files/${id}`, {
       method: 'PATCH',
@@ -434,6 +760,165 @@ router.patch('/patients/:id', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Update patient error:', err);
     res.status(500).json({ error: 'Failed to update patient.' });
+  }
+});
+
+// POST /patients/:id/family
+router.post('/patients/:id/family', async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const patientId = getRouteParam(req.params.id);
+    const body = (req.body || {}) as Record<string, unknown>;
+    const explicitMemberIds = Array.from(
+      new Set(
+        (Array.isArray(body.memberIds) ? body.memberIds : [])
+          .map((value) => sanitizeString(value, 128))
+          .filter((value) => value && value !== patientId)
+      )
+    );
+    const requestedFamilyName = sanitizeString(body.familyName, 160);
+
+    const rootId = await getHaloRootFolder(token);
+    const rawById = new Map<string, { id: string; appProperties?: Record<string, string> }>();
+    const patientsById = new Map<string, ReturnType<typeof parsePatientFolder>>();
+
+    let pageToken: string | undefined;
+    do {
+      let url = `/files?q=${encodeURIComponent(
+        `'${rootId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+      )}&fields=files(id,name,appProperties,createdTime),nextPageToken&pageSize=100`;
+      if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+      const page = await driveRequest(token, url);
+      for (const file of page.files || []) {
+        rawById.set(file.id, { id: file.id, appProperties: file.appProperties || {} });
+        patientsById.set(file.id, parsePatientFolder(file));
+      }
+      pageToken = page.nextPageToken || undefined;
+    } while (pageToken);
+
+    const currentPatient = patientsById.get(patientId);
+    if (!currentPatient) {
+      res.status(404).json({ error: 'Patient not found.' });
+      return;
+    }
+
+    const applyFamilyToPatient = async (
+      targetId: string,
+      nextFamilyGroupId: string,
+      nextFamilyName: string,
+      nextMemberIds: string[]
+    ) => {
+      const raw = rawById.get(targetId);
+      if (!raw) return;
+      const merged: Record<string, string> = { ...(raw.appProperties || {}) };
+      if (nextFamilyGroupId) {
+        merged.familyGroupId = nextFamilyGroupId;
+      } else {
+        delete merged.familyGroupId;
+      }
+      if (nextFamilyName) {
+        merged.familyName = nextFamilyName;
+      } else {
+        delete merged.familyName;
+      }
+      // Keep Drive appProperties compact: membership is derived from familyGroupId.
+      delete merged.familyMemberIds;
+
+      await driveRequest(token, `/files/${targetId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ appProperties: merged }),
+      });
+      rawById.set(targetId, { id: targetId, appProperties: merged });
+
+      const parsed = patientsById.get(targetId);
+      if (parsed) {
+        patientsById.set(targetId, {
+          ...parsed,
+          familyGroupId: nextFamilyGroupId || undefined,
+          familyName: nextFamilyName || undefined,
+          familyMemberIds: nextMemberIds.length > 1 ? nextMemberIds : undefined,
+        });
+      }
+    };
+
+    const targetMemberIds = Array.from(new Set([patientId, ...explicitMemberIds]));
+    const previousFamilyGroupId = currentPatient.familyGroupId || '';
+    const previousFamilyName = currentPatient.familyName || '';
+    const previousFamilyMembers = previousFamilyGroupId
+      ? Array.from(patientsById.values())
+          .filter((candidate) => candidate.familyGroupId === previousFamilyGroupId && candidate.id !== patientId)
+          .map((candidate) => candidate.id)
+      : [];
+
+    if (targetMemberIds.length <= 1) {
+      await applyFamilyToPatient(patientId, '', '', []);
+      const detachedMembers = previousFamilyMembers.filter((id) => id && id !== patientId);
+      for (const memberId of detachedMembers) {
+        const existing = patientsById.get(memberId);
+        if (!existing) continue;
+        const nextIds = Array.from(patientsById.values())
+          .filter((candidate) => candidate.familyGroupId === previousFamilyGroupId && candidate.id !== patientId)
+          .map((candidate) => candidate.id);
+        if (nextIds.length > 1) {
+          await applyFamilyToPatient(memberId, previousFamilyGroupId, previousFamilyName, nextIds);
+        } else {
+          await applyFamilyToPatient(memberId, '', '', []);
+        }
+      }
+      res.json({
+        success: true,
+        familyGroupId: null,
+        familyName: null,
+        members: [patientsById.get(patientId)].filter(Boolean),
+      });
+      return;
+    }
+
+    const existingGroupId =
+      targetMemberIds
+        .map((id) => patientsById.get(id)?.familyGroupId || '')
+        .find(Boolean) || '';
+    const familyGroupId =
+      existingGroupId ||
+      `family_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const existingFamilyName =
+      targetMemberIds
+        .map((id) => patientsById.get(id)?.familyName || '')
+        .find(Boolean) || '';
+    const surname = currentPatient.name.trim().split(/\s+/).pop() || 'Family';
+    const familyName = requestedFamilyName || existingFamilyName || `${surname} Family`;
+
+    for (const memberId of targetMemberIds) {
+      await applyFamilyToPatient(memberId, familyGroupId, familyName, targetMemberIds);
+    }
+
+    const removedFromOldFamily = previousFamilyMembers.filter(
+      (id) => id && id !== patientId && !targetMemberIds.includes(id)
+    );
+    for (const memberId of removedFromOldFamily) {
+      const existing = patientsById.get(memberId);
+      if (!existing) continue;
+      const nextIds = Array.from(patientsById.values())
+        .filter((candidate) => candidate.familyGroupId === previousFamilyGroupId && candidate.id !== patientId)
+        .map((candidate) => candidate.id);
+      if (nextIds.length > 1) {
+        await applyFamilyToPatient(memberId, previousFamilyGroupId, previousFamilyName, nextIds);
+      } else {
+        await applyFamilyToPatient(memberId, '', '', []);
+      }
+    }
+
+    res.json({
+      success: true,
+      familyGroupId,
+      familyName,
+      members: targetMemberIds
+        .map((id) => patientsById.get(id))
+        .filter((value): value is ReturnType<typeof parsePatientFolder> => Boolean(value)),
+    });
+  } catch (err) {
+    console.error('Update family error:', err);
+    res.status(500).json({ error: 'Failed to update family folder.' });
   }
 });
 
