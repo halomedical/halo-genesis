@@ -7,6 +7,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { requestNewTemplate } from '../services/api';
+import type { PatientImportResponse } from '../services/api';
 
 const HALO_TEMPLATE_OPTIONS = [
   { id: 'clinical_note', name: 'Clinical Note' },
@@ -21,13 +22,14 @@ interface Props {
   onClose: () => void;
   settings: UserSettings | null;
   onSave: (settings: UserSettings) => Promise<void>;
+  onImportPatientsJson?: (payload: unknown) => Promise<PatientImportResponse>;
   userEmail?: string;
   loginTime: number;
   onToast?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 export const SettingsModal: React.FC<Props> = ({
-  isOpen, onClose, settings, onSave, userEmail, loginTime, onToast,
+  isOpen, onClose, settings, onSave, onImportPatientsJson, userEmail, loginTime, onToast,
 }) => {
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState<UserSettings>(normalizeUserSettings(settings || DEFAULT_SETTINGS));
@@ -43,6 +45,9 @@ export const SettingsModal: React.FC<Props> = ({
   const [requestFiles, setRequestFiles] = useState<File[]>([]);
   const [requestSending, setRequestSending] = useState(false);
   const requestFileInputRef = useRef<HTMLInputElement>(null);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+  const [importingPatients, setImportingPatients] = useState(false);
+  const [lastImportSummary, setLastImportSummary] = useState<PatientImportResponse | null>(null);
 
   useEffect(() => {
     setForm(normalizeUserSettings(settings || DEFAULT_SETTINGS));
@@ -153,6 +158,36 @@ export const SettingsModal: React.FC<Props> = ({
       onToast?.(msg, 'error');
     } finally {
       setRequestSending(false);
+    }
+  };
+
+  const handleImportPatientsFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!onImportPatientsJson) {
+      onToast?.('Patient import is not available in this environment.', 'error');
+      return;
+    }
+
+    setImportingPatients(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      const result = await onImportPatientsJson(parsed);
+      setLastImportSummary(result);
+      onToast?.(
+        `Import finished: ${result.createdCount} created, ${result.skippedCount} skipped, ${result.failedCount} failed.`,
+        result.failedCount > 0 ? 'info' : 'success'
+      );
+    } catch (err) {
+      const message =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as Error).message)
+          : 'Failed to import patients JSON.';
+      onToast?.(message, 'error');
+    } finally {
+      setImportingPatients(false);
     }
   };
 
@@ -564,6 +599,38 @@ export const SettingsModal: React.FC<Props> = ({
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="border-t border-slate-100 pt-6">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+              <Upload size={12} /> Patient import
+            </h3>
+            <p className="text-xs text-slate-400 mb-3">
+              Import a JSON file of patients into the Patient Drive directory (bulk create with dedupe checks).
+            </p>
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={handleImportPatientsFile}
+            />
+            <button
+              type="button"
+              onClick={() => importFileInputRef.current?.click()}
+              disabled={importingPatients}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Upload size={14} />
+              {importingPatients ? 'Importing…' : 'Import patients JSON'}
+            </button>
+            {lastImportSummary ? (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                Created: <span className="font-semibold text-slate-800">{lastImportSummary.createdCount}</span> • Skipped:{' '}
+                <span className="font-semibold text-slate-800">{lastImportSummary.skippedCount}</span> • Failed:{' '}
+                <span className="font-semibold text-slate-800">{lastImportSummary.failedCount}</span>
+              </div>
+            ) : null}
           </div>
 
           <div className="border-t border-slate-100 pt-6">

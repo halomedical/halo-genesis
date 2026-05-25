@@ -4,7 +4,7 @@ import { PatientWorkspace, type WorkspaceNavigationIntent } from './pages/Patien
 import { Toast } from './components/Toast';
 import { SettingsModal } from './components/SettingsModal';
 import { UploadHud } from './components/UploadHud';
-import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures } from './services/api';
+import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson, updatePatientFamily } from './services/api';
 import { AdminAgentPanel } from 'halo-components/admin-agent-panel';
 import { AdminAgentOnboarding } from 'halo-components/admin-agent-onboarding';
 import { BillingPage } from 'halo-components/billing-page';
@@ -349,6 +349,22 @@ export const App = () => {
     showToast('Settings saved.', 'success');
   };
 
+  const handleImportPatientsJson = async (payload: unknown) => {
+    const result = await importPatientsJson(payload);
+    await refreshPatients();
+    return result;
+  };
+
+  const handleCreateFamilyFromSelection = async (memberIds: string[], familyName?: string) => {
+    const uniqueIds = Array.from(new Set(memberIds.filter(Boolean)));
+    if (uniqueIds.length < 2) {
+      throw new Error('Select at least two patients to create a family folder.');
+    }
+    const [anchorId, ...otherIds] = uniqueIds;
+    await updatePatientFamily(anchorId, otherIds, familyName);
+    await refreshPatients();
+  };
+
   const handleDeleteRequest = (patient: Patient) => {
     setPatientToDelete(patient);
   };
@@ -426,8 +442,10 @@ export const App = () => {
           }}
           onCreatePatient={openCreateModal}
           onDeletePatient={handleDeleteRequest}
+          onCreateFamilyFromSelection={handleCreateFamilyFromSelection}
           onLogout={handleLogout}
           onOpenSettings={() => setShowSettings(true)}
+          onToast={showToast}
           userEmail={userEmail}
           activeMainView={activeMainView}
           onOpenPatients={() => setActiveMainView('workspace')}
@@ -489,7 +507,9 @@ export const App = () => {
           <PatientWorkspace
             key={activePatient.id}
             patient={activePatient}
+            allPatients={patients}
             onBack={() => selectPatient(null)}
+            onOpenPatient={(patientId) => openPatientWorkspace(patientId)}
             onDataChange={refreshPatients}
             onToast={showToast}
             templateId={userSettings?.templateId || 'clinical_note'}
@@ -574,6 +594,7 @@ export const App = () => {
         onClose={() => setShowSettings(false)}
         settings={userSettings}
         onSave={handleSaveSettings}
+        onImportPatientsJson={handleImportPatientsJson}
         userEmail={userEmail}
         loginTime={loginTime}
         onToast={showToast}
