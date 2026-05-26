@@ -34,7 +34,7 @@ import {
   FolderPlus, ChevronRight, ExternalLink, FileText, Layers, Plus,
   History, CreditCard,
 } from 'lucide-react';
-import { HeaderConsultationRecorder } from 'halo-components/header-consultation-recorder';
+import { HeaderConsultationRecorder } from '../modules/scribe/features/scribe/HeaderConsultationRecorder';
 import { FileViewer } from '../components/FileViewer';
 import { FileBrowser } from '../components/FileBrowser';
 import { NoteEditor } from '../components/NoteEditor';
