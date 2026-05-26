@@ -10,7 +10,7 @@
     "minimum_tier": "starter",
     "billing_model": "per_note",
     "version": "1.0.0",
-    "built_by": "halo-components"
+    "built_by": "halo-genesis/modules"
   },
   {
     "id": "admin-agent-v1",
@@ -23,7 +23,7 @@
     "minimum_tier": "practice",
     "billing_model": "per_document",
     "version": "1.0.0",
-    "built_by": "halo-components"
+    "built_by": "halo-genesis/modules"
   },
   {
     "id": "billing-agent-v1",
@@ -36,6 +36,6 @@
     "minimum_tier": "practice",
     "billing_model": "sliding_percentage",
     "version": "1.0.0",
-    "built_by": "halo-components"
+    "built_by": "halo-genesis/modules"
   }
 ]
