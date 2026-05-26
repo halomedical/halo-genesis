@@ -6,8 +6,12 @@ import {
   billingCheckEligibility,
   billingSubmitClaim,
   billingReverseClaim,
+  ELIGIBILITY_REQUEST_TYPE_OPTIONS,
+  eligibilityRequiresMemberNumber,
+  normalizeEligibilityRequestType,
   type BillingClaimCreatePayload,
   type BillingEligibilityPayload,
+  type EligibilityRequestType,
   type EligibilityResponseDto,
   type StoredClaimRecord,
 } from './services/billingApi';
@@ -336,7 +340,7 @@ function compactEligibilityPayload(p: BillingEligibilityPayload): BillingEligibi
   };
 
   return {
-    requestType: compact(p.requestType) || 'normal',
+    requestType: normalizeEligibilityRequestType(compact(p.requestType)),
     memberNumber: compact(p.memberNumber),
     serviceDate: p.serviceDate,
     schemeCode: compact(p.schemeCode)?.toUpperCase(),
@@ -389,6 +393,14 @@ function ClaimsTab({
   });
   const [claimEligibilityResult, setClaimEligibilityResult] = useState<EligibilityResponseDto | null>(null);
   const [claimEligibilityLoading, setClaimEligibilityLoading] = useState(false);
+  const [eligibilityRequestType, setEligibilityRequestType] = useState<EligibilityRequestType>(() => {
+    const saved = readJson<BillingEligibilityPayload>(LS_LAST_ELIGIBILITY);
+    return normalizeEligibilityRequestType(saved?.requestType);
+  });
+  const [lastCheckedEligibilityType, setLastCheckedEligibilityType] = useState<EligibilityRequestType | null>(null);
+  const selectedEligibilityOption =
+    ELIGIBILITY_REQUEST_TYPE_OPTIONS.find((opt) => opt.value === eligibilityRequestType) ??
+    ELIGIBILITY_REQUEST_TYPE_OPTIONS[0];
 
   const applyPatientToClaim = (base: BillingClaimCreatePayload): BillingClaimCreatePayload => {
     if (!patient) return base;
@@ -427,6 +439,7 @@ function ClaimsTab({
 
   React.useEffect(() => {
     setClaimEligibilityResult(null);
+    setLastCheckedEligibilityType(null);
   }, [
     submitPayload.patient.memberNumber,
     submitPayload.patient.dependantCode,
@@ -442,6 +455,7 @@ function ClaimsTab({
     submitPayload.lineItems.map((li) => li.serviceDate).join('|'),
     patient?.schemeCode,
     userSettings?.billing?.schemeCode,
+    eligibilityRequestType,
   ]);
 
   const canSubmit = useMemo(() => {
@@ -688,7 +702,10 @@ function ClaimsTab({
     onToast('Claim removed from this list view.', 'info');
   };
 
-  const buildEligibilityFromClaim = (claimPayload: BillingClaimCreatePayload): BillingEligibilityPayload => {
+  const buildEligibilityFromClaim = (
+    claimPayload: BillingClaimCreatePayload,
+    requestType: EligibilityRequestType = eligibilityRequestType,
+  ): BillingEligibilityPayload => {
     const name = splitName(`${claimPayload.patient.firstName} ${claimPayload.patient.lastName}`.trim() || patient?.name || '');
     const firstServiceDate = claimPayload.lineItems.find((li) => li.serviceDate)?.serviceDate || getTodayIsoDate();
     const resolvedPlanCode =
@@ -712,7 +729,7 @@ function ClaimsTab({
       '';
 
     return {
-      requestType: 'normal',
+      requestType,
       memberNumber: resolvedMemberNumber,
       dependantCode: claimPayload.patient.dependantCode || patient?.dependantCode || '',
       patientDateOfBirth: claimPayload.patient.dateOfBirth || '',
@@ -730,10 +747,27 @@ function ClaimsTab({
   };
 
   const checkEligibilityForClaim = async () => {
-    const requestPayload = compactEligibilityPayload(buildEligibilityFromClaim(submitPayload));
-    const hasMemberOrId = !!(requestPayload.memberNumber ?? '').trim() || !!requestPayload.patientIdNumber?.trim();
-    if (!requestPayload.serviceDate || !requestPayload.schemeCode?.trim() || !requestPayload.planCode?.trim() || !hasMemberOrId) {
-      onToast('Eligibility needs service date, scheme code, plan code, and either member number or patient ID number.', 'error');
+    const requestPayload = compactEligibilityPayload(
+      buildEligibilityFromClaim(submitPayload, eligibilityRequestType),
+    );
+    const hasMemberNumber = !!(requestPayload.memberNumber ?? '').trim();
+    const hasPatientId = !!requestPayload.patientIdNumber?.trim();
+    const hasMemberOrId = hasMemberNumber || hasPatientId;
+    const memberRequired = eligibilityRequiresMemberNumber(requestPayload.requestType);
+
+    if (!requestPayload.serviceDate || !requestPayload.schemeCode?.trim() || !requestPayload.planCode?.trim()) {
+      onToast('Eligibility needs service date, scheme code, and plan code.', 'error');
+      return;
+    }
+    if (memberRequired && !hasMemberNumber) {
+      onToast(
+        `${selectedEligibilityOption.label} checks require a member number.`,
+        'error',
+      );
+      return;
+    }
+    if (!memberRequired && !hasMemberOrId) {
+      onToast('Eligibility needs either a member number or patient ID number.', 'error');
       return;
     }
     setClaimEligibilityLoading(true);
@@ -741,6 +775,7 @@ function ClaimsTab({
     try {
       const res = await billingCheckEligibility(requestPayload);
       setClaimEligibilityResult(res);
+      setLastCheckedEligibilityType(requestPayload.requestType as EligibilityRequestType);
       onToast(`Eligibility: ${res.status}.`, res.status === 'eligible' ? 'success' : 'info');
       writeJson(LS_LAST_ELIGIBILITY, requestPayload);
       if (patient?.id) {
@@ -932,12 +967,38 @@ function ClaimsTab({
           <div className="mt-1">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Submit new claim</p>
             <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0 flex-1">
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Eligibility check</p>
                   <p className="text-sm text-slate-600">
-                    Check member eligibility for the current claim details before submission.
+                    Choose the MediKredit check type, then run eligibility against the current claim details.
                   </p>
+                  <div className="mt-3 max-w-xl">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      Check type
+                    </label>
+                    <select
+                      value={eligibilityRequestType}
+                      onChange={(e) =>
+                        setEligibilityRequestType(
+                          normalizeEligibilityRequestType(e.target.value),
+                        )
+                      }
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                    >
+                      {ELIGIBILITY_REQUEST_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                      {selectedEligibilityOption.description}
+                      {selectedEligibilityOption.requiresMemberNumber
+                        ? ' Member number is required for this check type.'
+                        : ' Member number or patient ID number can be used for this check type.'}
+                    </p>
+                  </div>
                 </div>
                 <SmallButton onClick={checkEligibilityForClaim} disabled={claimEligibilityLoading}>
                   {claimEligibilityLoading ? <RefreshCw size={16} className="animate-spin" /> : null}
@@ -955,7 +1016,18 @@ function ClaimsTab({
                           : 'border-amber-200 bg-amber-50 text-amber-800'
                     }`}
                   >
-                    <p className="font-semibold">Status: {claimEligibilityResult.status}</p>
+                    <p className="font-semibold">
+                      Status: {claimEligibilityResult.status}
+                      {lastCheckedEligibilityType ? (
+                        <span className="ml-2 font-normal text-slate-600">
+                          (
+                          {ELIGIBILITY_REQUEST_TYPE_OPTIONS.find(
+                            (opt) => opt.value === lastCheckedEligibilityType,
+                          )?.label ?? lastCheckedEligibilityType}
+                          )
+                        </span>
+                      ) : null}
+                    </p>
                     {claimEligibilityResult.messages?.length ? (
                       <ul className="mt-1 list-disc pl-5">
                         {claimEligibilityResult.messages.map((msg, idx) => (

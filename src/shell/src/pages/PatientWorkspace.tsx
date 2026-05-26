@@ -330,9 +330,18 @@ export const PatientWorkspace: React.FC<Props> = ({
   const [previewLoadingNoteId, setPreviewLoadingNoteId] = useState<string | null>(null);
 
   const allOtherPatients = allPatients.filter((candidate) => candidate.id !== patient.id);
-  const currentFamilyMembers = patient.familyGroupId
-    ? allOtherPatients.filter((candidate) => candidate.familyGroupId === patient.familyGroupId)
+  const familyMembers = patient.familyGroupId
+    ? Array.from(
+        allPatients
+          .filter((candidate) => candidate.familyGroupId === patient.familyGroupId)
+          .reduce((byId, candidate) => {
+            if (!byId.has(candidate.id)) byId.set(candidate.id, candidate);
+            return byId;
+          }, new Map<string, Patient>())
+          .values()
+      ).sort((a, b) => a.name.localeCompare(b.name))
     : [];
+  const currentFamilyMembers = familyMembers.filter((member) => member.id !== patient.id);
   const currentFamilyMemberIds = currentFamilyMembers.map((candidate) => candidate.id);
   const patientSurname = extractSurname(patient.name);
   const suggestedSurnameMembers = allOtherPatients.filter((candidate) => {
@@ -1490,13 +1499,13 @@ export const PatientWorkspace: React.FC<Props> = ({
                 <CreditCard className="w-3.5 h-3.5" /> Billing details
               </button>
             </div>
-            {currentFamilyMembers.length > 0 ? (
+            {familyMembers.length > 1 ? (
               <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-sky-700">
                   Family folder{patient.familyName ? `: ${patient.familyName}` : ''}
                 </p>
                 <div className="mt-1 flex flex-wrap gap-1.5">
-                  {[patient, ...currentFamilyMembers].map((member) => (
+                  {familyMembers.map((member) => (
                     <button
                       key={member.id}
                       type="button"

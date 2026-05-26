@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Patient } from '../../../../shared/types';
 import {
-  Plus, LogOut, Search, Trash2, ChevronDown,
+  Plus, LogOut, Search, Trash2, ChevronDown, ChevronRight,
   Settings, Loader2, Calendar as CalendarIcon, Users, Clock, ChevronsLeft, ChevronsRight, LayoutPanelTop, Bot, Sparkles,
   CreditCard,
 } from 'lucide-react';
@@ -69,6 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [selectedPatientIds, setSelectedPatientIds] = useState<string[]>([]);
   const [familyNameInput, setFamilyNameInput] = useState('');
   const [creatingFamily, setCreatingFamily] = useState(false);
+  const [expandedFamilyIds, setExpandedFamilyIds] = useState<Set<string>>(() => new Set());
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const patientsActive = activeMainView === 'workspace';
   const calendarActive = activeMainView === 'calendar';
@@ -106,6 +107,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [searchTerm, patients, patientsActive]);
 
+  useEffect(() => {
+    if (!selectedPatientId) return;
+    const selected = patients.find((p) => p.id === selectedPatientId);
+    if (!selected?.familyGroupId) return;
+    setExpandedFamilyIds((prev) => {
+      if (prev.has(selected.familyGroupId!)) return prev;
+      const next = new Set(prev);
+      next.add(selected.familyGroupId!);
+      return next;
+    });
+  }, [selectedPatientId, patients]);
+
   const filteredPatients = searchTerm.trim()
     ? patients.filter(p => {
         const localMatch =
@@ -128,7 +141,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         name: patient.familyName || 'Family folder',
         members: [] as Patient[],
       };
-      current.members.push(patient);
+      if (!current.members.some((member) => member.id === patient.id)) {
+        current.members.push(patient);
+      }
       if (!current.name && patient.familyName) current.name = patient.familyName;
       acc.set(key, current);
       return acc;
@@ -186,6 +201,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const clearSelection = () => {
     setSelectedPatientIds([]);
+  };
+
+  const toggleFamilyGroup = (groupId: string) => {
+    setExpandedFamilyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
   };
 
   const createFamilyFromSelected = async () => {
@@ -488,16 +515,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       No family folders yet
                     </p>
                   ) : (
-                    filteredFamilyGroups.map((group) => (
-                      <div key={group.id} className="mb-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-                        <p className="text-xs font-semibold text-slate-700">
-                          {group.name || 'Family folder'} ({group.members.length})
-                        </p>
-                        <div className="mt-1 space-y-1">
-                          {group.members.map((member) => renderPatientRow(member, `family-${group.id}`))}
+                    filteredFamilyGroups.map((group) => {
+                      const isExpanded = expandedFamilyIds.has(group.id);
+                      return (
+                        <div key={group.id} className="mb-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleFamilyGroup(group.id)}
+                            className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
+                          >
+                            {isExpanded ? (
+                              <ChevronDown size={14} className="shrink-0 text-slate-500" />
+                            ) : (
+                              <ChevronRight size={14} className="shrink-0 text-slate-500" />
+                            )}
+                            <span className="truncate">
+                              {group.name || 'Family folder'} ({group.members.length})
+                            </span>
+                          </button>
+                          {isExpanded ? (
+                            <div className="mt-1 space-y-1">
+                              {group.members.map((member) => renderPatientRow(member, `family-${group.id}`))}
+                            </div>
+                          ) : null}
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </>
               )}

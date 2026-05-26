@@ -175,8 +175,75 @@ export interface ClaimResultDto {
   messages: string[];
 }
 
+export type EligibilityRequestType =
+  | 'normal'
+  | 'family'
+  | 'auth'
+  | 'exclusion'
+  | 'auth_and_exclusion';
+
+export interface EligibilityRequestTypeOption {
+  value: EligibilityRequestType;
+  label: string;
+  description: string;
+  requiresMemberNumber: boolean;
+}
+
+/** MediKredit eligibility modes mapped to tx_cd 20–33. */
+export const ELIGIBILITY_REQUEST_TYPE_OPTIONS: EligibilityRequestTypeOption[] = [
+  {
+    value: 'normal',
+    label: 'Normal',
+    description: 'Standard day-to-day eligibility before submitting a claim. Supports ID-only checks.',
+    requiresMemberNumber: false,
+  },
+  {
+    value: 'family',
+    label: 'Family (FAMCHECK)',
+    description: 'Confirm dependant and family membership details for the member.',
+    requiresMemberNumber: true,
+  },
+  {
+    value: 'auth',
+    label: 'Authorisation (AUTHCHECK)',
+    description: 'Check whether services may require pre-authorisation.',
+    requiresMemberNumber: true,
+  },
+  {
+    value: 'exclusion',
+    label: 'Exclusion (AUTHCHECK)',
+    description: 'Check whether treatment may be excluded by plan rules.',
+    requiresMemberNumber: true,
+  },
+  {
+    value: 'auth_and_exclusion',
+    label: 'Auth + exclusion',
+    description: 'Combined pre-check for both authorisation and exclusion risk.',
+    requiresMemberNumber: true,
+  },
+];
+
+export function normalizeEligibilityRequestType(
+  value: string | undefined,
+): EligibilityRequestType {
+  const match = ELIGIBILITY_REQUEST_TYPE_OPTIONS.find((opt) => opt.value === value);
+  return match?.value ?? 'normal';
+}
+
+export function eligibilityRequiresMemberNumber(
+  requestType: EligibilityRequestType | string | undefined,
+): boolean {
+  const normalized = normalizeEligibilityRequestType(
+    typeof requestType === 'string' ? requestType : undefined,
+  );
+  return (
+    ELIGIBILITY_REQUEST_TYPE_OPTIONS.find((opt) => opt.value === normalized)
+      ?.requiresMemberNumber ?? false
+  );
+}
+
 export interface BillingEligibilityPayload {
-  requestType?: 'normal' | 'family' | 'auth' | 'exclusion' | 'auth_and_exclusion' | string;
+  requestType?: EligibilityRequestType | string;
   memberNumber?: string;
   schemeCode?: string;
   planCode?: string;
