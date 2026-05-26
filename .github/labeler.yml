@@ -6,6 +6,10 @@ shell:
   - changed-files:
       - any-glob-to-any-file: "src/shell/**"
 
+modules:
+  - changed-files:
+      - any-glob-to-any-file: "src/shell/src/modules/**"
+
 server:
   - changed-files:
       - any-glob-to-any-file: "server/**"
