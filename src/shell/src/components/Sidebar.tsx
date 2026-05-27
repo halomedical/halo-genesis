@@ -378,54 +378,54 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
 
           {!collapsed && patientsExpanded && (
-            <div className="mt-2 space-y-1 pl-1">
-              {/* Search */}
-              <div className="relative mb-3">
-                <Search
-                  size={13}
-                  className="absolute left-2.5 top-2.5 text-slate-400 pointer-events-none"
-                />
-                <input
-                  type="text"
-                  placeholder="Search patients..."
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                  className="w-full bg-slate-50 text-[13px] pl-8 pr-3 py-2 rounded-lg border border-slate-200 outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-100 transition-all placeholder:text-slate-400"
-                />
-                {isAiSearching && (
-                  <Loader2
-                    size={12}
-                    className="absolute right-2.5 top-2.5 text-cyan-500 animate-spin"
+            <div className="mt-2 flex max-h-[min(32rem,calc(100vh-13rem))] flex-col pl-1">
+              <div className="sticky top-0 z-10 shrink-0 space-y-1 bg-white pb-2 shadow-[0_4px_12px_-8px_rgba(15,23,42,0.35)]">
+                {/* Search */}
+                <div className="relative mb-3">
+                  <Search
+                    size={13}
+                    className="absolute left-2.5 top-2.5 text-slate-400 pointer-events-none"
                   />
-                )}
-              </div>
-
-              <div className="mb-2 rounded-lg bg-slate-100 p-1">
-                <div className="grid grid-cols-2 gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setPatientListView('all')}
-                    className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${
-                      patientListView === 'all' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-600 hover:text-slate-700'
-                    }`}
-                  >
-                    All Patients
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPatientListView('families')}
-                    className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${
-                      patientListView === 'families' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-600 hover:text-slate-700'
-                    }`}
-                  >
-                    Families
-                  </button>
+                  <input
+                    type="text"
+                    placeholder="Search patients..."
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                    className="w-full bg-slate-50 text-[13px] pl-8 pr-3 py-2 rounded-lg border border-slate-200 outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-100 transition-all placeholder:text-slate-400"
+                  />
+                  {isAiSearching && (
+                    <Loader2
+                      size={12}
+                      className="absolute right-2.5 top-2.5 text-cyan-500 animate-spin"
+                    />
+                  )}
                 </div>
-              </div>
 
-              {patientListView === 'all' ? (
-                <>
-                  <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                <div className="mb-2 rounded-lg bg-slate-100 p-1">
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setPatientListView('all')}
+                      className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${
+                        patientListView === 'all' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-600 hover:text-slate-700'
+                      }`}
+                    >
+                      All Patients
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPatientListView('families')}
+                      className={`rounded-md px-2 py-1.5 text-xs font-semibold transition ${
+                        patientListView === 'families' ? 'bg-white text-cyan-700 shadow-sm' : 'text-slate-600 hover:text-slate-700'
+                      }`}
+                    >
+                      Families
+                    </button>
+                  </div>
+                </div>
+
+                {patientListView === 'all' ? (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
                     <div className="flex items-center justify-between">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                         Bulk actions
@@ -474,7 +474,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </div>
                     ) : null}
                   </div>
+                ) : null}
+              </div>
 
+              <div className="min-h-0 flex-1 space-y-1 overflow-y-auto custom-scrollbar">
+              {patientListView === 'all' ? (
+                <>
                   {!searchTerm && recentPatients.length > 0 && !selectionMode ? (
                     <>
                       <div className="flex items-center gap-2 px-2 mb-1.5">
@@ -544,6 +549,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                 </>
               )}
+              </div>
             </div>
           )}
         </div>
