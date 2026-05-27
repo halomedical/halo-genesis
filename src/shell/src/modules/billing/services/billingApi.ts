@@ -15,11 +15,7 @@ export class BillingApiError extends Error {
   }
 }
 
-function normalizeBillingErrorMessage(data: unknown, status: number): string {
-  if (typeof data === 'string' && data.trim()) return data.trim();
-  if (!data || typeof data !== 'object') return `Billing API request failed (${status})`;
-
-  const body = data as Record<string, unknown>;
+function extractMessageFromBody(body: Record<string, unknown>): string | null {
   const messageField = body.message;
   if (typeof messageField === 'string' && messageField.trim()) {
     return messageField.trim();
@@ -28,15 +24,101 @@ function normalizeBillingErrorMessage(data: unknown, status: number): string {
     const parts = messageField
       .map((value) => (typeof value === 'string' ? value.trim() : ''))
       .filter(Boolean);
-    if (parts.length > 0) return parts.join(' | ');
+    if (parts.length > 0) return parts.join('; ');
   }
-
   const errorField = body.error;
   if (typeof errorField === 'string' && errorField.trim()) {
     return errorField.trim();
   }
+  return null;
+}
 
-  return `Billing API request failed (${status})`;
+function extractDetailsFromBody(body: Record<string, unknown>): string | null {
+  const details = body.details;
+  if (typeof details === 'string' && details.trim()) return details.trim();
+  if (Array.isArray(details)) {
+    const parts = details
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join('; ');
+  }
+  return null;
+}
+
+function normalizeBillingErrorMessage(data: unknown, status: number): string {
+  if (typeof data === 'string' && data.trim()) return data.trim();
+  if (!data || typeof data !== 'object') {
+    return status === 0
+      ? 'Billing API unreachable (network or CORS). Check VITE_BILLING_API_BASE and that the server is running.'
+      : `Billing API request failed (HTTP ${status})`;
+  }
+
+  const body = data as Record<string, unknown>;
+  const parts: string[] = [];
+
+  const primary = extractMessageFromBody(body);
+  if (primary) parts.push(primary);
+
+  const details = extractDetailsFromBody(body);
+  if (details && details !== primary) parts.push(details);
+
+  if (typeof body.transactionNumber === 'string' && body.transactionNumber.trim()) {
+    parts.push(`Transaction ${body.transactionNumber.trim()}`);
+  }
+
+  if (Array.isArray(body.reversalMessages)) {
+    const mk = body.reversalMessages
+      .filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
+      .join('; ');
+    if (mk) parts.push(`MediKredit: ${mk}`);
+  }
+
+  if (parts.length > 0) return parts.join(' — ');
+
+  return `Billing API request failed (HTTP ${status})`;
+}
+
+/** User-facing error text for billing toasts and inline alerts. */
+export function formatBillingError(error: unknown, context?: string): string {
+  const prefix = context ? `${context}: ` : '';
+
+  if (error instanceof BillingApiError) {
+    const lines: string[] = [];
+    const core = error.message?.trim() || `Request failed (HTTP ${error.status || '?'})`;
+    lines.push(`${prefix}${core}`);
+
+    if (error.body && typeof error.body === 'object') {
+      const body = error.body as Record<string, unknown>;
+      const details = extractDetailsFromBody(body);
+      if (details && !core.includes(details)) {
+        lines.push(details);
+      }
+      if (typeof body.transactionNumber === 'string' && !core.includes(body.transactionNumber)) {
+        lines.push(`Transaction ${body.transactionNumber}`);
+      }
+      if (Array.isArray(body.reversalMessages)) {
+        const mk = body.reversalMessages
+          .filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
+          .join('; ');
+        if (mk && !core.includes(mk)) lines.push(`MediKredit: ${mk}`);
+      }
+    }
+
+    if (error.status === 401) {
+      lines.push('Check VITE_MEDIKREDIT_API_KEY matches the billing API key.');
+    } else if (error.status === 502) {
+      lines.push('MediKredit test service may be down or certificates misconfigured on the server.');
+    } else if (error.status === 400) {
+      lines.push('Fix the form fields shown above, or load the original claim details before reversing.');
+    } else if (!BILLING_API_KEY) {
+      lines.push('VITE_MEDIKREDIT_API_KEY is not set in this build.');
+    }
+
+    return lines.join(' — ');
+  }
+
+  if (error instanceof Error) return `${prefix}${error.message}`;
+  return `${prefix}Something went wrong. Please try again.`;
 }
 
 async function billingRequest<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
@@ -106,6 +188,8 @@ export interface StoredClaimRecord {
   reversed: boolean;
   reversalStatus?: string;
   reversalMessages: string[];
+  /** Present on GET /claims/:id — use to autofill reversal with the same transaction details. */
+  requestPayload?: BillingClaimCreatePayload;
   totalClaimedCents?: number;
   totalPaidCents?: number;
   varianceCents?: number;
@@ -143,6 +227,8 @@ export interface BillingClaimLineItemPayload {
   procedureCode: string;
   description?: string;
   quantity: number;
+  baseTariffCents?: number;
+  tariffPercent?: number;
   unitPriceCents: number;
   totalPriceCents: number;
   serviceDate: string;
