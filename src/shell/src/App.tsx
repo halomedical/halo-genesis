@@ -118,8 +118,6 @@ export const App = () => {
   useEffect(() => {
     if (!adminAgentEnabled) {
       setAdminAgentOpen(false);
-    } else if (!localStorage.getItem('halo_agent_onboarding_done')) {
-      setShowAgentOnboarding(true);
     }
   }, [adminAgentEnabled]);
 
@@ -426,7 +424,6 @@ export const App = () => {
   const activePatient = patients.find(p => p.id === selectedPatientId);
   const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
   const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
-  const scribeEnabled = effectiveFeatures?.scribe ?? (userSettings?.modules?.scribe ?? true);
   const hideSidebarOnMobile = activeMainView === 'workspace' && Boolean(selectedPatientId);
 
   return (
@@ -514,7 +511,6 @@ export const App = () => {
             onToast={showToast}
             templateId={userSettings?.templateId || 'clinical_note'}
             onUploadHudChange={setUploadHudState}
-            scribeEnabled={scribeEnabled}
             navigationIntent={workspaceIntent}
             onNavigationIntentHandled={(intentId) =>
               setWorkspaceIntent((current) => (current?.id === intentId ? null : current))
@@ -565,7 +561,6 @@ export const App = () => {
           userEmail={userEmail}
           onComplete={() => {
             setShowAgentOnboarding(false);
-            // Enable the module in settings so the sidebar item appears
             const updated: Parameters<typeof handleSaveSettings>[0] = {
               ...(userSettings || {}),
               modules: { ...(userSettings?.modules || {}), adminAgent: true },

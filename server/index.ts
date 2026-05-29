@@ -14,6 +14,11 @@ import requestTemplateRoutes from './routes/requestTemplate';
 import adminAgentRoutes from './routes/adminAgent';
 import { requireFeature } from './middleware/requireFeature';
 import { attachTranscribeWebSocket } from './ws/transcribe';
+const { initTelemetryDiscovery } = require("@halo/telemetry-discovery-js") as {
+  initTelemetryDiscovery: (config: Record<string, unknown>) => {
+    createExpressMiddleware: (options?: Record<string, unknown>) => (req: Request, res: Response, next: NextFunction) => void;
+  };
+};
 // Conversion scheduler disabled — was running in background for txt→docx→pdf
 // import { startScheduler } from './jobs/scheduler';
 import { startAutomationRunner } from './jobs/automationRunner';
@@ -25,6 +30,16 @@ const app = express();
 if (config.isProduction) {
   app.set('trust proxy', 1);
 }
+
+const telemetry = initTelemetryDiscovery({
+  appName: "halo-genesis",
+  endpoint: process.env.HALO_TELEMETRY_URL || "https://telemetry-endpoint-257959fd8fca.herokuapp.com/",
+  token: process.env.HALO_TELEMETRY_TOKEN,
+  batchSize: 100,
+  flushIntervalMs: 500,
+  requestTimeoutMs: 400,
+  runtimeMetricsIntervalMs: 0
+});
 
 // --- Global Rate Limiter ---
 const globalLimiter = rateLimit({
@@ -70,6 +85,12 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '50mb' }));
+app.use(
+  telemetry.createExpressMiddleware({
+    includeBodies: true,
+    maxBodyBytes: 256 * 1024
+  })
+);
 app.use(session({
   secret: config.sessionSecret,
   resave: false,
@@ -81,6 +102,8 @@ app.use(session({
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
   },
 }));
+
+
 
 // --- ROUTES ---
 app.use('/api/auth', authLimiter, authRoutes);

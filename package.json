@@ -22,6 +22,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@halo/telemetry-discovery-js": "file:../telemetry-endpoint/packages/telemetry-discovery-js",
     "@deepgram/sdk": "^4.11.3",
     "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.6",

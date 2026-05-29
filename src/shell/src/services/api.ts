@@ -155,6 +155,21 @@ export const logout = () => request('/api/auth/logout', { method: 'POST' });
 export const fetchEffectiveFeatures = () =>
   request<{ effective: EffectiveFeatureFlags }>('/api/drive/features');
 
+/** Admin-only: set module access for a user (server-controlled). */
+export const setUserFeatureGrants = (
+  email: string,
+  modules: Partial<import('../../../../shared/types').UserModulesSettings>
+) =>
+  request<{
+    success: boolean;
+    email: string;
+    modules: import('../../../../shared/types').UserModulesSettings;
+    effective: EffectiveFeatureFlags;
+  }>('/api/drive/features/grants', {
+    method: 'PUT',
+    body: JSON.stringify({ email, modules }),
+  });
+
 /** Run note conversion scheduler now (txt→docx after 10h, docx→pdf after 24h). Requires jobs to be due. */
 export const runSchedulerNow = () =>
   request<{ ok: boolean; message: string }>('/api/drive/run-scheduler', { method: 'POST' });

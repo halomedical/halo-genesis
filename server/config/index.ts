@@ -47,6 +47,12 @@ export const config = {
   vpsAdminEmail: process.env.VPS_ADMIN_EMAIL || '',
   vpsAdminPassword: process.env.VPS_ADMIN_PASSWORD || '',
 
+  // Comma-separated emails allowed to set per-user feature grants via API.
+  featureAdminEmails: (process.env.FEATURE_ADMIN_EMAILS || process.env.VPS_ADMIN_EMAIL || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean),
+
   // Halo Functions API
   haloApiBaseUrl: process.env.HALO_API_BASE_URL || 'https://halo-functions-75316778879.africa-south1.run.app',
   haloUserId: process.env.HALO_USER_ID || 'cae6877e-0fbe-4ea1-acce-39957e7575bc',

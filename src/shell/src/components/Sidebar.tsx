@@ -584,63 +584,63 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {admissionsEnabled && (
-          <div className="mb-1">
-            <button
-              type="button"
-              onClick={() => {
-                onOpenAdmissions?.();
-              }}
-              title="Admissions"
-              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
-                admissionsActive
-                  ? 'bg-cyan-50 text-cyan-700'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-              } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
-            >
-              <LayoutPanelTop
-                size={17}
-                className={admissionsActive ? 'text-cyan-600' : 'text-slate-400'}
-              />
-              {!collapsed && (
-                <>
-                  <span className="flex-1 text-left">Admissions</span>
-                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                    Board
-                  </span>
-                </>
-              )}
-            </button>
-          </div>
+        <div className="mb-1">
+          <button
+            type="button"
+            onClick={() => {
+              onOpenAdmissions?.();
+            }}
+            title="Admissions"
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+              admissionsActive
+                ? 'bg-cyan-50 text-cyan-700'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+            } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
+          >
+            <LayoutPanelTop
+              size={17}
+              className={admissionsActive ? 'text-cyan-600' : 'text-slate-400'}
+            />
+            {!collapsed && (
+              <>
+                <span className="flex-1 text-left">Admissions</span>
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Board
+                </span>
+              </>
+            )}
+          </button>
+        </div>
         )}
 
         {adminAgentEnabled && (
-          <div className="mb-1">
-            <button
-              type="button"
-              onClick={onToggleAdminAgent}
-              title="Admin Agent"
-              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
-                adminAgentOpen
-                  ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-600/20'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-              } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
-            >
-              <Bot
-                size={17}
-                className={adminAgentOpen ? 'text-white' : 'text-slate-400'}
-              />
-              {!collapsed && (
-                <>
-                  <span className="flex-1 text-left">Admin Agent</span>
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${
-                    adminAgentOpen ? 'bg-white/20 text-white' : 'border border-slate-200 bg-white text-slate-400'
-                  }`}>
-                    {adminAgentOpen ? 'Open' : 'AI'}
-                  </span>
-                </>
-              )}
-            </button>
-          </div>
+        <div className="mb-1">
+          <button
+            type="button"
+            onClick={onToggleAdminAgent}
+            title="Admin Agent"
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+              adminAgentOpen
+                ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-600/20'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+            } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
+          >
+            <Bot
+              size={17}
+              className={adminAgentOpen ? 'text-white' : 'text-slate-400'}
+            />
+            {!collapsed && (
+              <>
+                <span className="flex-1 text-left">Admin Agent</span>
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                  adminAgentOpen ? 'bg-white/20 text-white' : 'border border-slate-200 bg-white text-slate-400'
+                }`}>
+                  {adminAgentOpen ? 'Open' : 'AI'}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
         )}
 
         {/* ── MARKETPLACE ── */}
@@ -666,26 +666,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {billingEnabled && (
-          <div className="mb-1">
-            <button
-              type="button"
-              onClick={() => onOpenBilling?.()}
-              title="Billing"
-              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
-                billingActive
-                  ? 'bg-cyan-50 text-cyan-700'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-              } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
-            >
-              <CreditCard
-                size={17}
-                className={billingActive ? 'text-cyan-600' : 'text-slate-400'}
-              />
-              {!collapsed && (
-                <span className="flex-1 text-left">Billing</span>
-              )}
-            </button>
-          </div>
+        <div className="mb-1">
+          <button
+            type="button"
+            onClick={() => onOpenBilling?.()}
+            title="Billing"
+            className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+              billingActive
+                ? 'bg-cyan-50 text-cyan-700'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+            } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
+          >
+            <CreditCard
+              size={17}
+              className={billingActive ? 'text-cyan-600' : 'text-slate-400'}
+            />
+            {!collapsed && (
+              <span className="flex-1 text-left">Billing</span>
+            )}
+          </button>
+        </div>
         )}
       </nav>
 

@@ -30,12 +30,17 @@ import {
 } from '../services/admissionsBoard';
 // Scheduler disabled; run-scheduler and scheduler-status kept for optional manual use
 import { runSchedulerNow, getSchedulerStatus } from '../jobs/scheduler';
-import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../shared/types';
-import { resolveEffectiveFeatureFlags } from '../../shared/featureFlags';
-import type { AdmissionsBoard, ScribeSession } from '../../shared/types';
-import { getVpsJwt, getVpsConfig, setVpsConfig } from '../services/vpsApi';
-import { loadExtensionRegistry } from '../services/extensionsRegistry';
+import { normalizeUserSettings } from '../../shared/types';
+import type { AdmissionsBoard, ScribeSession, UserModulesSettings } from '../../shared/types';
+import { getVpsJwt } from '../services/vpsApi';
 import { requireFeature } from '../middleware/requireFeature';
+import {
+  isFeatureAdmin,
+  loadUserSettingsForEmail,
+  resolveEffectiveFeaturesForUser,
+  saveUserSettingsForEmail,
+  setUserModulesForEmail,
+} from '../services/userFeatures';
 
 const router = Router();
 router.use(requireAuth);
@@ -66,25 +71,6 @@ const BILLING_ELIGIBILITY_FILE_NAME = 'halo_billing_eligibility.json';
 const FILES_CACHE_TTL_MS = 30_000; // 30 seconds
 const filesListCache = new Map<string, { files: Array<{ id: string; name: string; mimeType: string; url: string; thumbnail?: string; createdTime: string }>; nextPage: string | null; cachedAt: number }>();
 
-const USER_SETTINGS_KEY = 'user_settings';
-const USER_SETTINGS_V2_MARKER = '__by_email__';
-
-function normalizeSettingsEmail(userEmail: string): string {
-  return String(userEmail || '').trim().toLowerCase();
-}
-
-function parseSettingsBlob(raw: string | null): Record<string, unknown> | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object') {
-      return parsed as Record<string, unknown>;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 function invalidateFilesCacheForFolder(folderId: string): void {
   for (const key of filesListCache.keys()) {
@@ -1519,7 +1505,7 @@ router.get('/patients/:id/summary', async (req: Request, res: Response) => {
 });
 
 // GET /admissions-board
-router.get('/admissions-board', async (req: Request, res: Response) => {
+router.get('/admissions-board', requireFeature('admissions'), async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
@@ -1533,7 +1519,7 @@ router.get('/admissions-board', async (req: Request, res: Response) => {
 });
 
 // PUT /admissions-board
-router.put('/admissions-board', async (req: Request, res: Response) => {
+router.put('/admissions-board', requireFeature('admissions'), async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
@@ -1739,30 +1725,12 @@ router.get('/settings', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
-    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
-    const parsed = parseSettingsBlob(raw);
-    const emailKey = normalizeSettingsEmail(userEmail);
-
-    let settings = DEFAULT_USER_SETTINGS;
-    if (parsed) {
-      const byEmail = parsed[USER_SETTINGS_V2_MARKER];
-      if (byEmail && typeof byEmail === 'object') {
-        const emailSettings = (byEmail as Record<string, unknown>)[emailKey];
-        const legacySettings = (byEmail as Record<string, unknown>).__legacy__;
-        settings = normalizeUserSettings(
-          (emailSettings && typeof emailSettings === 'object')
-            ? (emailSettings as Record<string, unknown>)
-            : ((legacySettings && typeof legacySettings === 'object') ? (legacySettings as Record<string, unknown>) : undefined)
-        );
-      } else {
-        // Backward compatibility: legacy payload was a plain UserSettings object.
-        settings = normalizeUserSettings(parsed);
-      }
-    }
+    const settings = await loadUserSettingsForEmail(vpsJwt, userEmail);
     res.json({ settings });
   } catch (err) {
     console.error('Load settings error:', err);
-    res.status(500).json({ error: 'Failed to load settings.' });
+    const message = err instanceof Error ? err.message : 'Failed to load settings.';
+    res.status(500).json({ error: message });
   }
 });
 
@@ -1772,31 +1740,43 @@ router.get('/features', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
-    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
-    const parsed = parseSettingsBlob(raw);
-    const emailKey = normalizeSettingsEmail(userEmail);
-
-    let settings = DEFAULT_USER_SETTINGS;
-    if (parsed) {
-      const byEmail = parsed[USER_SETTINGS_V2_MARKER];
-      if (byEmail && typeof byEmail === 'object') {
-        const emailSettings = (byEmail as Record<string, unknown>)[emailKey];
-        const legacySettings = (byEmail as Record<string, unknown>).__legacy__;
-        settings = normalizeUserSettings(
-          (emailSettings && typeof emailSettings === 'object')
-            ? (emailSettings as Record<string, unknown>)
-            : ((legacySettings && typeof legacySettings === 'object') ? (legacySettings as Record<string, unknown>) : undefined)
-        );
-      } else {
-        settings = normalizeUserSettings(parsed);
-      }
-    }
-    const registry = loadExtensionRegistry();
-    const effective = resolveEffectiveFeatureFlags(settings, registry);
+    const settings = await loadUserSettingsForEmail(vpsJwt, userEmail);
+    const effective = resolveEffectiveFeaturesForUser(userEmail, settings);
     res.json({ effective });
   } catch (err) {
     console.error('Load feature flags error:', err);
-    res.status(500).json({ error: 'Failed to load feature flags.' });
+    const message = err instanceof Error ? err.message : 'Failed to load feature flags.';
+    res.status(500).json({ error: message });
+  }
+});
+
+// PUT /features/grants — admin-only: set module access for a user (stored server-side).
+router.put('/features/grants', async (req: Request, res: Response) => {
+  try {
+    const actorEmail = req.session.userEmail;
+    if (!isFeatureAdmin(actorEmail)) {
+      res.status(403).json({ error: 'Not authorized to manage feature grants.' });
+      return;
+    }
+
+    const targetEmail = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+    const modules = req.body?.modules as Partial<UserModulesSettings> | undefined;
+    if (!targetEmail || !modules || typeof modules !== 'object') {
+      res.status(400).json({ error: 'email and modules are required.' });
+      return;
+    }
+
+    const token = req.session.accessToken!;
+    const vpsJwt = await getVpsJwt(token, actorEmail!);
+    const savedModules = await setUserModulesForEmail(vpsJwt, targetEmail, modules);
+    const effective = resolveEffectiveFeaturesForUser(
+      targetEmail,
+      normalizeUserSettings({ modules: savedModules })
+    );
+    res.json({ success: true, email: targetEmail, modules: savedModules, effective });
+  } catch (err) {
+    console.error('Set feature grants error:', err);
+    res.status(500).json({ error: 'Failed to save feature grants.' });
   }
 });
 
@@ -1811,30 +1791,12 @@ router.put('/settings', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
-    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
-    const parsed = parseSettingsBlob(raw);
-    const emailKey = normalizeSettingsEmail(userEmail);
-
-    let nextBlob: Record<string, unknown>;
-    if (parsed && parsed[USER_SETTINGS_V2_MARKER] && typeof parsed[USER_SETTINGS_V2_MARKER] === 'object') {
-      nextBlob = parsed;
-    } else {
-      // Migrate legacy blob shape to v2.
-      nextBlob = {
-        [USER_SETTINGS_V2_MARKER]: {},
-      };
-      if (parsed) {
-        (nextBlob[USER_SETTINGS_V2_MARKER] as Record<string, unknown>).__legacy__ = parsed;
-      }
-    }
-
-    const byEmail = nextBlob[USER_SETTINGS_V2_MARKER] as Record<string, unknown>;
-    byEmail[emailKey] = settings;
-    await setVpsConfig(vpsJwt, USER_SETTINGS_KEY, JSON.stringify(nextBlob));
+    await saveUserSettingsForEmail(vpsJwt, userEmail, settings);
     res.json({ success: true });
   } catch (err) {
     console.error('Save settings error:', err);
-    res.status(500).json({ error: 'Failed to save settings.' });
+    const message = err instanceof Error ? err.message : 'Failed to save settings.';
+    res.status(500).json({ error: message });
   }
 });
 
