@@ -153,7 +153,11 @@ export const getLoginUrl = () => request<{ url: string }>('/api/auth/login-url')
 export const checkAuth = () => request<{ signedIn: boolean; email?: string }>('/api/auth/me');
 export const logout = () => request('/api/auth/logout', { method: 'POST' });
 export const fetchEffectiveFeatures = () =>
-  request<{ effective: EffectiveFeatureFlags }>('/api/drive/features');
+  request<{
+    effective: EffectiveFeatureFlags;
+    practice: { id: string; name: string; slug: string } | null;
+    source: 'database' | 'default';
+  }>('/api/drive/features');
 
 /** Run note conversion scheduler now (txt→docx after 10h, docx→pdf after 24h). Requires jobs to be due. */
 export const runSchedulerNow = () =>
