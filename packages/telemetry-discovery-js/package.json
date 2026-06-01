@@ -1,0 +1,13 @@
+{
+  "name": "@halo/telemetry-discovery-js",
+  "version": "0.1.0",
+  "description": "HALO maximal discovery telemetry SDK for Node apps",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

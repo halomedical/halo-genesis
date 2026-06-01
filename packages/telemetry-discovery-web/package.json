@@ -1,0 +1,10 @@
+{
+  "name": "@halo/telemetry-discovery-web",
+  "version": "0.1.0",
+  "description": "HALO maximal discovery telemetry SDK for browser apps",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  }
+}
