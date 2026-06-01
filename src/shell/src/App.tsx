@@ -56,6 +56,7 @@ export const App = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [effectiveFeatures, setEffectiveFeatures] = useState<EffectiveFeatureFlags | null>(null);
+  const [practiceInfo, setPracticeInfo] = useState<{ id: string; name: string; slug: string } | null>(null);
   const [userEmail, setUserEmail] = useState<string | undefined>();
   const [loginTime] = useState<number>(Date.now());
 
@@ -100,20 +101,18 @@ export const App = () => {
   }, [uploadHudState]);
 
   useEffect(() => {
-    const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
-    if (!admissionsEnabled && activeMainView === 'admissions') {
+    if (!effectiveFeatures?.admissions && activeMainView === 'admissions') {
       setActiveMainView('workspace');
     }
-  }, [activeMainView, effectiveFeatures?.admissions, userSettings?.modules?.admissions]);
+  }, [activeMainView, effectiveFeatures?.admissions]);
 
   useEffect(() => {
-    const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
-    if (!billingEnabled && activeMainView === 'billing') {
+    if (!effectiveFeatures?.billing && activeMainView === 'billing') {
       setActiveMainView('workspace');
     }
-  }, [activeMainView, effectiveFeatures?.billing, userSettings?.modules?.billing]);
+  }, [activeMainView, effectiveFeatures?.billing]);
 
-  const adminAgentEnabled = effectiveFeatures?.adminAgent ?? (userSettings?.modules?.adminAgent ?? false);
+  const adminAgentEnabled = effectiveFeatures?.adminAgent ?? false;
 
   useEffect(() => {
     if (!adminAgentEnabled) {
@@ -207,6 +206,7 @@ export const App = () => {
 
           fetchEffectiveFeatures().then((res) => {
             setEffectiveFeatures(res.effective);
+            setPracticeInfo(res.practice);
           }).catch(() => {});
 
         }
@@ -337,15 +337,9 @@ export const App = () => {
   };
 
   const handleSaveSettings = async (settings: UserSettings) => {
-    await saveSettings(settings);
-    setUserSettings(settings);
-    setEffectiveFeatures((prev) => ({
-      ...(prev || {}),
-      admissions: settings.modules?.admissions ?? false,
-      adminAgent: settings.modules?.adminAgent ?? false,
-      scribe: settings.modules?.scribe ?? true,
-      billing: settings.modules?.billing ?? false,
-    }));
+    const { modules: _modules, ...profileOnly } = settings;
+    await saveSettings(profileOnly);
+    setUserSettings(profileOnly);
     showToast('Settings saved.', 'success');
   };
 
@@ -424,9 +418,9 @@ export const App = () => {
   }
 
   const activePatient = patients.find(p => p.id === selectedPatientId);
-  const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
-  const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
-  const scribeEnabled = effectiveFeatures?.scribe ?? (userSettings?.modules?.scribe ?? true);
+  const admissionsEnabled = effectiveFeatures?.admissions ?? false;
+  const billingEnabled = effectiveFeatures?.billing ?? false;
+  const scribeEnabled = effectiveFeatures?.scribe ?? false;
   const hideSidebarOnMobile = activeMainView === 'workspace' && Boolean(selectedPatientId);
 
   return (
@@ -564,13 +558,8 @@ export const App = () => {
         <AdminAgentOnboarding
           userEmail={userEmail}
           onComplete={() => {
+            localStorage.setItem('halo_agent_onboarding_done', '1');
             setShowAgentOnboarding(false);
-            // Enable the module in settings so the sidebar item appears
-            const updated: Parameters<typeof handleSaveSettings>[0] = {
-              ...(userSettings || {}),
-              modules: { ...(userSettings?.modules || {}), adminAgent: true },
-            } as Parameters<typeof handleSaveSettings>[0];
-            handleSaveSettings(updated).catch(() => {});
             setAdminAgentOpen(true);
             setActiveMainView('workspace');
           }}
@@ -598,6 +587,8 @@ export const App = () => {
         userEmail={userEmail}
         loginTime={loginTime}
         onToast={showToast}
+        effectiveFeatures={effectiveFeatures}
+        practiceName={practiceInfo?.name ?? null}
       />
 
       {/* CREATE PATIENT MODAL */}

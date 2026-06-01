@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../../../shared/types';
 import type { UserSettings } from '../../../../shared/types';
+import type { EffectiveFeatureFlags } from '../../../../shared/featureFlags';
 import {
   X, Pencil, Save, User, Clock, Briefcase, MapPin, GraduationCap,
   FileText, Upload, Check, AlertCircle, Send, Plus, LayoutPanelTop,
@@ -26,10 +27,40 @@ interface Props {
   userEmail?: string;
   loginTime: number;
   onToast?: (message: string, type: 'success' | 'error' | 'info') => void;
+  effectiveFeatures?: EffectiveFeatureFlags | null;
+  practiceName?: string | null;
 }
+
+const MODULE_LABELS: Array<{
+  key: keyof EffectiveFeatureFlags;
+  title: string;
+  description: string;
+}> = [
+  {
+    key: 'admissions',
+    title: 'Admissions',
+    description: 'Trello-style inpatient management board in the sidebar.',
+  },
+  {
+    key: 'adminAgent',
+    title: 'Admin Agent',
+    description: 'Admin assistant panel for document workflows and practice memory.',
+  },
+  {
+    key: 'scribe',
+    title: 'Scribe',
+    description: 'Live consultation recording, note generation, and session history.',
+  },
+  {
+    key: 'billing',
+    title: 'Billing',
+    description: 'MediKredit billing tab and billing-specific patient workflows.',
+  },
+];
 
 export const SettingsModal: React.FC<Props> = ({
   isOpen, onClose, settings, onSave, onImportPatientsJson, userEmail, loginTime, onToast,
+  effectiveFeatures, practiceName,
 }) => {
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState<UserSettings>(normalizeUserSettings(settings || DEFAULT_SETTINGS));
@@ -75,12 +106,14 @@ export const SettingsModal: React.FC<Props> = ({
     if (editMode && requiredFieldsMissing) return;
     setSaving(true);
     try {
+      const { modules: _modules, ...profileForm } = form;
       const updated = normalizeUserSettings({
-        ...form,
+        ...profileForm,
         noteTemplate: templateTab,
         templateId: form.templateId || 'clinical_note',
       });
-      await onSave(updated);
+      const { modules: _m2, ...toSave } = updated;
+      await onSave(toSave);
       setForm(updated);
       setEditMode(false);
     } catch {
@@ -195,15 +228,6 @@ export const SettingsModal: React.FC<Props> = ({
 
   const hasProfile = form.firstName || form.lastName || form.profession || form.department;
   const displayName = [form.firstName, form.lastName].filter(Boolean).join(' ') || 'Not set';
-  const toggleModule = (key: 'admissions' | 'adminAgent' | 'scribe' | 'billing') =>
-    setForm((prev) => ({
-      ...prev,
-      modules: {
-        ...(prev.modules || { admissions: false, adminAgent: false, scribe: true, billing: false }),
-        [key]: !(prev.modules?.[key] ?? false),
-      },
-    }));
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg m-4 max-h-[90vh] flex flex-col overflow-hidden">
@@ -634,117 +658,37 @@ export const SettingsModal: React.FC<Props> = ({
           </div>
 
           <div className="border-t border-slate-100 pt-6">
-            <h3 className="mb-3 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+            <h3 className="mb-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
               <LayoutPanelTop size={12} /> Modules
             </h3>
+            <p className="mb-3 text-xs text-slate-500">
+              {practiceName
+                ? `Assigned by your practice (${practiceName}). Contact Halo ops to change access.`
+                : 'Module access is managed by Halo ops in the database. Sign out and back in after changes.'}
+            </p>
             <div className="space-y-3">
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">Admissions</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Show the Trello-style inpatient management board in the sidebar.
-                    </p>
+              {MODULE_LABELS.map(({ key, title, description }) => {
+                const enabled = effectiveFeatures?.[key] ?? false;
+                return (
+                  <div key={key} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">{title}</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          enabled
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {enabled ? 'On' : 'Off'}
+                      </span>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleModule('admissions')}
-                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
-                      form.modules?.admissions
-                        ? 'border-cyan-500 bg-cyan-500'
-                        : 'border-slate-200 bg-white'
-                    }`}
-                    aria-pressed={form.modules?.admissions ?? false}
-                  >
-                    <span
-                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
-                        form.modules?.admissions ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">Admin Agent</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Enable the admin assistant panel for document workflows and practice memory tasks.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleModule('adminAgent')}
-                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
-                      form.modules?.adminAgent
-                        ? 'border-cyan-500 bg-cyan-500'
-                        : 'border-slate-200 bg-white'
-                    }`}
-                    aria-pressed={form.modules?.adminAgent ?? false}
-                  >
-                    <span
-                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
-                        form.modules?.adminAgent ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">Scribe</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Enable live consultation recording, note generation, and patient session history.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleModule('scribe')}
-                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
-                      form.modules?.scribe
-                        ? 'border-cyan-500 bg-cyan-500'
-                        : 'border-slate-200 bg-white'
-                    }`}
-                    aria-pressed={form.modules?.scribe ?? false}
-                  >
-                    <span
-                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
-                        form.modules?.scribe ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">Billing</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Enable the MediKredit billing tab and billing-specific patient workflows.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleModule('billing')}
-                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
-                      form.modules?.billing
-                        ? 'border-cyan-500 bg-cyan-500'
-                        : 'border-slate-200 bg-white'
-                    }`}
-                    aria-pressed={form.modules?.billing ?? false}
-                  >
-                    <span
-                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
-                        form.modules?.billing ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
+                );
+              })}
             </div>
           </div>
 
@@ -755,7 +699,6 @@ export const SettingsModal: React.FC<Props> = ({
         templateTab !== normalizeUserSettings(settings || DEFAULT_SETTINGS).noteTemplate ||
         form.customTemplateContent !== normalizeUserSettings(settings || DEFAULT_SETTINGS).customTemplateContent ||
         form.templateId !== normalizeUserSettings(settings || DEFAULT_SETTINGS).templateId ||
-        JSON.stringify(form.modules || {}) !== JSON.stringify(normalizeUserSettings(settings || DEFAULT_SETTINGS).modules || {}) ||
         JSON.stringify(form.billing || {}) !== JSON.stringify(normalizeUserSettings(settings || DEFAULT_SETTINGS).billing || {}) ? (
           <div className="border-t border-slate-100 p-4 bg-slate-50 flex gap-3">
             <button

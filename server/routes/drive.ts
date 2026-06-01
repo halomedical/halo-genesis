@@ -31,10 +31,9 @@ import {
 // Scheduler disabled; run-scheduler and scheduler-status kept for optional manual use
 import { runSchedulerNow, getSchedulerStatus } from '../jobs/scheduler';
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../shared/types';
-import { resolveEffectiveFeatureFlags } from '../../shared/featureFlags';
+import { getPracticeEntitlementsForEmail } from '../services/practiceEntitlements';
 import type { AdmissionsBoard, ScribeSession } from '../../shared/types';
 import { getVpsJwt, getVpsConfig, setVpsConfig } from '../services/vpsApi';
-import { loadExtensionRegistry } from '../services/extensionsRegistry';
 import { requireFeature } from '../middleware/requireFeature';
 
 const router = Router();
@@ -1759,41 +1758,24 @@ router.get('/settings', async (req: Request, res: Response) => {
         settings = normalizeUserSettings(parsed);
       }
     }
-    res.json({ settings });
+    const { modules: _modules, ...profileOnly } = settings;
+    res.json({ settings: profileOnly });
   } catch (err) {
     console.error('Load settings error:', err);
     res.status(500).json({ error: 'Failed to load settings.' });
   }
 });
 
-// GET /features
+// GET /features — module access from Supabase practice_features (not user Settings)
 router.get('/features', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
-    const vpsJwt = await getVpsJwt(token, userEmail);
-    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
-    const parsed = parseSettingsBlob(raw);
-    const emailKey = normalizeSettingsEmail(userEmail);
-
-    let settings = DEFAULT_USER_SETTINGS;
-    if (parsed) {
-      const byEmail = parsed[USER_SETTINGS_V2_MARKER];
-      if (byEmail && typeof byEmail === 'object') {
-        const emailSettings = (byEmail as Record<string, unknown>)[emailKey];
-        const legacySettings = (byEmail as Record<string, unknown>).__legacy__;
-        settings = normalizeUserSettings(
-          (emailSettings && typeof emailSettings === 'object')
-            ? (emailSettings as Record<string, unknown>)
-            : ((legacySettings && typeof legacySettings === 'object') ? (legacySettings as Record<string, unknown>) : undefined)
-        );
-      } else {
-        settings = normalizeUserSettings(parsed);
-      }
-    }
-    const registry = loadExtensionRegistry();
-    const effective = resolveEffectiveFeatureFlags(settings, registry);
-    res.json({ effective });
+    const entitlements = await getPracticeEntitlementsForEmail(userEmail);
+    res.json({
+      effective: entitlements.effective,
+      practice: entitlements.practice,
+      source: entitlements.source,
+    });
   } catch (err) {
     console.error('Load feature flags error:', err);
     res.status(500).json({ error: 'Failed to load feature flags.' });
@@ -1829,7 +1811,8 @@ router.put('/settings', async (req: Request, res: Response) => {
     }
 
     const byEmail = nextBlob[USER_SETTINGS_V2_MARKER] as Record<string, unknown>;
-    byEmail[emailKey] = settings;
+    const { modules: _ignoredModules, ...profileSettings } = settings;
+    byEmail[emailKey] = profileSettings;
     await setVpsConfig(vpsJwt, USER_SETTINGS_KEY, JSON.stringify(nextBlob));
     res.json({ success: true });
   } catch (err) {
