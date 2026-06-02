@@ -128,6 +128,22 @@ interface EntityLookup {
   label: string;
 }
 
+function errorMessage(err: unknown): string {
+  if (!err || typeof err !== 'object') return '';
+  const maybe = err as { message?: unknown };
+  return typeof maybe.message === 'string' ? maybe.message : '';
+}
+
+function isMissingSchemaError(err: unknown): boolean {
+  const msg = errorMessage(err).toLowerCase();
+  return (
+    msg.includes('does not exist') ||
+    msg.includes('column') ||
+    msg.includes('relation') ||
+    msg.includes('schema cache')
+  );
+}
+
 async function resolveEntityByKey(
   supabase: SupabaseClient,
   table: 'specialties' | 'subspecialties',
@@ -158,6 +174,22 @@ async function ensurePracticeMembershipByEmail(
     .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
     .eq('email', normalizedEmail)
     .maybeSingle();
+  if (existing.error && isMissingSchemaError(existing.error)) {
+    // Backward compatibility while migrations are still rolling out.
+    const legacy = await supabase
+      .from('practice_users')
+      .select('practice_id, role, practices ( id, name, slug )')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+    if (!legacy.error && (legacy.data as { practice_id?: string } | null)?.practice_id) {
+      return {
+        ...(legacy.data as Record<string, unknown>),
+        specialty_id: null,
+        subspecialty_id: null,
+        onboarding_completed_at: null,
+      } as MembershipRow;
+    }
+  }
   if (existing.error) {
     console.error('[practiceEntitlements] practice_users lookup failed:', existing.error.message);
     throw new Error('Failed to load practice entitlements.');
@@ -213,6 +245,21 @@ async function ensurePracticeMembershipByEmail(
     .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
     .eq('email', normalizedEmail)
     .maybeSingle();
+  if (provisioned.error && isMissingSchemaError(provisioned.error)) {
+    const legacy = await supabase
+      .from('practice_users')
+      .select('practice_id, role, practices ( id, name, slug )')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+    if (!legacy.error && (legacy.data as { practice_id?: string } | null)?.practice_id) {
+      return {
+        ...(legacy.data as Record<string, unknown>),
+        specialty_id: null,
+        subspecialty_id: null,
+        onboarding_completed_at: null,
+      } as MembershipRow;
+    }
+  }
   if (provisioned.error || !provisioned.data?.practice_id) {
     console.error('[practiceEntitlements] reload auto-provisioned membership failed:', provisioned.error?.message);
     throw new Error('Failed to load auto-provisioned membership.');
@@ -226,6 +273,13 @@ async function resolveOnboardingCatalog(supabase: SupabaseClient): Promise<Onboa
     supabase.from('subspecialties').select('key, label, specialty_id'),
   ]);
   if (specialtiesRes.error || subspecialtiesRes.error) {
+    if (isMissingSchemaError(specialtiesRes.error || subspecialtiesRes.error)) {
+      return {
+        modules: ['admissions', 'adminAgent', 'scribe', 'billing'],
+        specialties: [],
+        subspecialties: [],
+      };
+    }
     console.error(
       '[practiceEntitlements] onboarding catalog lookup failed:',
       specialtiesRes.error?.message || subspecialtiesRes.error?.message
@@ -312,11 +366,13 @@ export async function getPracticeEntitlementsForEmail(
       .select('admissions, admin_agent, scribe, billing')
       .eq('specialty_id', onboarding.specialty_id)
       .maybeSingle();
-    if (specialtyDefaultsRes.error) {
+    if (specialtyDefaultsRes.error && !isMissingSchemaError(specialtyDefaultsRes.error)) {
       console.error('[practiceEntitlements] specialty_module_defaults lookup failed:', specialtyDefaultsRes.error.message);
       throw new Error('Failed to load practice entitlements.');
     }
-    autoModules = orModules(autoModules, practiceFeatureRowToSettings(specialtyDefaultsRes.data));
+    if (!specialtyDefaultsRes.error) {
+      autoModules = orModules(autoModules, practiceFeatureRowToSettings(specialtyDefaultsRes.data));
+    }
   }
   if (onboarding?.subspecialty_id) {
     const subspecialtyDefaultsRes = await supabase
@@ -324,14 +380,16 @@ export async function getPracticeEntitlementsForEmail(
       .select('admissions, admin_agent, scribe, billing')
       .eq('subspecialty_id', onboarding.subspecialty_id)
       .maybeSingle();
-    if (subspecialtyDefaultsRes.error) {
+    if (subspecialtyDefaultsRes.error && !isMissingSchemaError(subspecialtyDefaultsRes.error)) {
       console.error(
         '[practiceEntitlements] subspecialty_module_defaults lookup failed:',
         subspecialtyDefaultsRes.error.message
       );
       throw new Error('Failed to load practice entitlements.');
     }
-    autoModules = orModules(autoModules, practiceFeatureRowToSettings(subspecialtyDefaultsRes.data));
+    if (!subspecialtyDefaultsRes.error) {
+      autoModules = orModules(autoModules, practiceFeatureRowToSettings(subspecialtyDefaultsRes.data));
+    }
   }
 
   if (onboarding) {
@@ -343,7 +401,7 @@ export async function getPracticeEntitlementsForEmail(
         ? supabase.from('subspecialties').select('key').eq('id', onboarding.subspecialty_id).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     ]);
-    if (specialtyRes.error || subspecialtyRes.error) {
+    if ((specialtyRes.error && !isMissingSchemaError(specialtyRes.error)) || (subspecialtyRes.error && !isMissingSchemaError(subspecialtyRes.error))) {
       console.error(
         '[practiceEntitlements] specialty/subspecialty key lookup failed:',
         specialtyRes.error?.message || subspecialtyRes.error?.message
@@ -448,6 +506,18 @@ export async function submitOnboardingForEmail(userEmail: string, input: SubmitO
       onboarding_completed_at: new Date().toISOString(),
     })
     .eq('email', email);
+  if (profileError && isMissingSchemaError(profileError)) {
+    // Temporary compatibility: save role even when onboarding columns are missing.
+    const roleOnly = await supabase
+      .from('practice_users')
+      .update({ role: sanitizeRole(input.role) })
+      .eq('email', email);
+    if (!roleOnly.error) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } else {
+      console.error('[practiceEntitlements] role fallback update failed:', roleOnly.error.message);
+    }
+  }
 
   const selectedModules = normalizeOnboardingSelection(input.selectedModules);
   const { error: practiceFeaturesError } = await supabase.from('practice_features').upsert(
@@ -461,7 +531,7 @@ export async function submitOnboardingForEmail(userEmail: string, input: SubmitO
     { onConflict: 'practice_id' }
   );
 
-  if (profileError || practiceFeaturesError) {
+  if ((profileError && !isMissingSchemaError(profileError)) || practiceFeaturesError) {
     console.error(
       '[practiceEntitlements] onboarding submit failed:',
       profileError?.message || practiceFeaturesError?.message
