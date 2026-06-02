@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import { config } from '../config';
 import { loadExtensionRegistry } from './extensionsRegistry';
 import { resolveEffectiveFeatureFlags, type EffectiveFeatureFlags } from '../../shared/featureFlags';
@@ -35,8 +36,10 @@ function getSupabase(): SupabaseClient | null {
     return null;
   }
 
+  // Node 20 (Heroku) has no native WebSocket; @supabase/realtime-js requires `ws`.
   supabaseClient = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    realtime: { transport: ws as never },
   });
   return supabaseClient;
 }
