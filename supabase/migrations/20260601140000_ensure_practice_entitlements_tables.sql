@@ -50,17 +50,16 @@ create table if not exists public.practice_users (
 create index if not exists practice_users_email_idx on public.practice_users (email);
 
 -- ---------------------------------------------------------------------------
--- practice_features
+-- practice_features (one row per practice)
 -- ---------------------------------------------------------------------------
 create table if not exists public.practice_features (
   practice_id uuid not null references public.practices (id) on delete cascade,
-  module text not null,
-  enabled boolean not null default false,
+  admissions boolean not null default false,
+  admin_agent boolean not null default false,
+  scribe boolean not null default false,
+  billing boolean not null default false,
   updated_at timestamptz not null default now(),
-  primary key (practice_id, module),
-  constraint practice_features_module_check check (
-    module in ('admissions', 'admin_agent', 'scribe', 'billing')
-  )
+  primary key (practice_id)
 );
 
 create index if not exists practice_features_practice_id_idx on public.practice_features (practice_id);
@@ -97,4 +96,4 @@ alter table public.practice_features enable row level security;
 
 comment on table public.practices is 'Tenant practices; feature access is configured per practice in practice_features.';
 comment on table public.practice_users is 'Maps user email (Google sign-in) to a practice.';
-comment on table public.practice_features is 'Module entitlements per practice. Edit enabled flags here to turn features on/off.';
+comment on table public.practice_features is 'One row per practice with boolean module entitlements.';

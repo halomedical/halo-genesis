@@ -1,38 +1,20 @@
 import type { UserModulesSettings } from './types';
 
-/** Module ids stored in `practice_features.module`. */
-export type PracticeModuleId = 'admissions' | 'admin_agent' | 'scribe' | 'billing';
+/** Single-row shape stored in `practice_features`. */
+export interface PracticeFeaturesRow {
+  admissions: boolean;
+  admin_agent: boolean;
+  scribe: boolean;
+  billing: boolean;
+}
 
-export const PRACTICE_MODULE_IDS: PracticeModuleId[] = [
-  'admissions',
-  'admin_agent',
-  'scribe',
-  'billing',
-];
-
-const MODULE_TO_SETTINGS_KEY: Record<PracticeModuleId, keyof UserModulesSettings> = {
-  admissions: 'admissions',
-  admin_agent: 'adminAgent',
-  scribe: 'scribe',
-  billing: 'billing',
-};
-
-export function practiceModuleRowsToSettings(
-  rows: Array<{ module: string; enabled: boolean }>
+export function practiceFeatureRowToSettings(
+  row: Partial<PracticeFeaturesRow> | null | undefined
 ): UserModulesSettings {
-  const modules: UserModulesSettings = {
-    admissions: false,
-    adminAgent: false,
-    scribe: false,
-    billing: false,
+  return {
+    admissions: Boolean(row?.admissions),
+    adminAgent: Boolean(row?.admin_agent),
+    scribe: Boolean(row?.scribe),
+    billing: Boolean(row?.billing),
   };
-
-  for (const row of rows) {
-    const key = MODULE_TO_SETTINGS_KEY[row.module as PracticeModuleId];
-    if (key) {
-      modules[key] = Boolean(row.enabled);
-    }
-  }
-
-  return modules;
 }
