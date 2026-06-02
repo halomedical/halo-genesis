@@ -9,6 +9,9 @@ Module access (Scribe, Billing, Admin Agent, Admissions) is controlled in **Supa
 | `practices` | One row per clinic / practice |
 | `practice_users` | Links a Google sign-in email → `practice_id` |
 | `practice_features` | One row per practice with boolean module columns |
+| `specialties` / `subspecialties` | Onboarding taxonomy for specialty and subspecialty |
+| `specialty_module_defaults` / `subspecialty_module_defaults` | Auto-enabled modules by specialty/subspecialty |
+| `practice_users` | User-practice mapping + role/specialty/subspecialty onboarding fields |
 
 ## Module columns (`practice_features`)
 
@@ -56,6 +59,7 @@ Apply migrations via Supabase CLI `supabase db push` or the SQL editor.
 If your old `practice_features` table has `module`/`enabled` rows, run:
 
 - `20260602112000_practice_features_single_row.sql` (migrates existing rows to one row per practice)
+- `20260602120000_onboarding_orchestrator.sql` (adds onboarding orchestrator tables + starter specialties)
 
 Full history (optional):
 
@@ -63,5 +67,8 @@ Full history (optional):
 2. `20260601130000_practices_add_slug.sql` — if `slug` column missing
 3. `20260601140000_ensure_practice_entitlements_tables.sql` — if `practice_users` / `practice_features` missing
 4. `20260602112000_practice_features_single_row.sql` — convert old row-per-module features to single-row booleans
+5. `20260602120000_onboarding_orchestrator.sql` — onboarding profile + specialty/subspecialty defaults
+6. `20260602121000_drop_user_module_preferences.sql` — remove duplicate per-user module table; use practice_features only
+7. `20260602123000_onboarding_profile_into_practice_users.sql` — move onboarding profile fields into practice_users
 
 If Supabase is not configured, the API falls back to default modules (Scribe only) for all users.
