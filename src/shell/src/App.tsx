@@ -4,18 +4,24 @@ import { PatientWorkspace, type WorkspaceNavigationIntent } from './pages/Patien
 import { Toast } from './components/Toast';
 import { SettingsModal } from './components/SettingsModal';
 import { UploadHud } from './components/UploadHud';
-import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson, updatePatientFamily } from './services/api';
+import {
+  checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient,
+  loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson,
+  updatePatientFamily, fetchOnboardingState, completeOnboarding,
+} from './services/api';
 import { AdminAgentPanel } from './modules/admin-agent/components/AdminAgentPanel';
 import { AdminAgentOnboarding } from './modules/admin-agent/components/AdminAgentOnboarding';
 import { BillingPage } from './modules/billing/BillingPage';
 import type { Patient, UserSettings, CalendarEvent } from '../../../shared/types';
 import type { EffectiveFeatureFlags } from '../../../shared/featureFlags';
+import type { OnboardingStateResponse } from '../../../shared/onboarding';
 import type { StickerExtractedData } from './services/api';
 import type { UploadHudState } from './components/UploadHud';
 import { LogIn, Loader, X, UserPlus, Calendar, Users, AlertTriangle, Trash2, ScanLine, Loader2 } from 'lucide-react';
 import { CalendarPage } from './pages/CalendarPage';
 import { AdmissionsPage } from './pages/AdmissionsPage';
 import { MarketplacePage } from './pages/MarketplacePage';
+import { OnboardingModal } from './components/OnboardingModal';
 
 export const App = () => {
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -83,6 +89,10 @@ export const App = () => {
   const [workspaceIntent, setWorkspaceIntent] = useState<WorkspaceNavigationIntent | null>(null);
   const [adminAgentOpen, setAdminAgentOpen] = useState(false);
   const [showAgentOnboarding, setShowAgentOnboarding] = useState(false);
+  const [onboardingRequired, setOnboardingRequired] = useState(false);
+  const [onboardingState, setOnboardingState] = useState<OnboardingStateResponse | null>(null);
+  const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -207,6 +217,12 @@ export const App = () => {
           fetchEffectiveFeatures().then((res) => {
             setEffectiveFeatures(res.effective);
             setPracticeInfo(res.practice);
+            setOnboardingRequired(Boolean(res.onboardingRequired));
+          }).catch(() => {});
+
+          fetchOnboardingState().then((state) => {
+            setOnboardingState(state);
+            setOnboardingRequired(Boolean(state.required));
           }).catch(() => {});
 
         }
@@ -241,6 +257,49 @@ export const App = () => {
     setIsSignedIn(false);
     selectPatient(null);
     setActiveMainView('workspace');
+    setOnboardingRequired(false);
+    setOnboardingState(null);
+    setOnboardingDismissed(false);
+  };
+
+  const handleCompleteOnboarding = async (payload: {
+    role: string;
+    specialtyKey: string;
+    subspecialtyKey: string | null;
+    selectedModules: { admissions: boolean; adminAgent: boolean; scribe: boolean; billing: boolean };
+  }) => {
+    setOnboardingSubmitting(true);
+    try {
+      const completion = await completeOnboarding(payload);
+
+      // Close immediately once backend confirms save; refreshes below are best-effort.
+      setOnboardingRequired(Boolean(completion.onboardingRequired));
+      setOnboardingDismissed(true);
+
+      const [featuresRes, onboardingRes] = await Promise.allSettled([
+        fetchEffectiveFeatures(),
+        fetchOnboardingState(),
+      ]);
+
+      if (featuresRes.status === 'fulfilled') {
+        setEffectiveFeatures(featuresRes.value.effective);
+        setPracticeInfo(featuresRes.value.practice);
+        setOnboardingRequired(Boolean(featuresRes.value.onboardingRequired));
+        if (!featuresRes.value.practice) {
+          showToast('Onboarding saved. Ask ops to map your email to a practice for full feature access.', 'info');
+        }
+      }
+      if (onboardingRes.status === 'fulfilled') {
+        setOnboardingState(onboardingRes.value);
+        setOnboardingRequired(Boolean(onboardingRes.value.required));
+      }
+      showToast('Onboarding complete.', 'success');
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+      throw error;
+    } finally {
+      setOnboardingSubmitting(false);
+    }
   };
 
   const resetCreateForm = () => {
@@ -895,6 +954,13 @@ export const App = () => {
           </div>
         </div>
       )}
+
+      <OnboardingModal
+        isOpen={isSignedIn && onboardingRequired && !onboardingDismissed}
+        state={onboardingState}
+        submitting={onboardingSubmitting}
+        onSubmit={handleCompleteOnboarding}
+      />
     </div>
   );
 };

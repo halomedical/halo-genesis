@@ -4,6 +4,7 @@ import { loadExtensionRegistry } from './extensionsRegistry';
 import { resolveEffectiveFeatureFlags, type EffectiveFeatureFlags } from '../../shared/featureFlags';
 import { practiceFeatureRowToSettings } from '../../shared/practiceModules';
 import { DEFAULT_USER_MODULES, normalizeUserSettings, type UserModulesSettings } from '../../shared/types';
+import type { OnboardingCatalog, OnboardingModuleKey, OnboardingProfile } from '../../shared/onboarding';
 
 export interface PracticeSummary {
   id: string;
@@ -13,8 +14,12 @@ export interface PracticeSummary {
 
 export interface PracticeEntitlementsResult {
   effective: EffectiveFeatureFlags;
+  selectedModules: UserModulesSettings;
+  autoModules: UserModulesSettings;
   modules: UserModulesSettings;
   practice: PracticeSummary | null;
+  onboardingRequired: boolean;
+  profile: OnboardingProfile | null;
   source: 'database' | 'default';
 }
 
@@ -45,9 +50,130 @@ function defaultEntitlements(): PracticeEntitlementsResult {
   const registry = loadExtensionRegistry();
   return {
     effective: resolveEffectiveFeatureFlags(normalizeUserSettings({ modules }), registry),
+    selectedModules: { ...modules },
+    autoModules: { ...DEFAULT_USER_MODULES },
     modules,
     practice: null,
+    onboardingRequired: true,
+    profile: null,
     source: 'default',
+  };
+}
+
+function orModules(a: UserModulesSettings, b: UserModulesSettings): UserModulesSettings {
+  return {
+    admissions: Boolean(a.admissions || b.admissions),
+    adminAgent: Boolean(a.adminAgent || b.adminAgent),
+    scribe: Boolean(a.scribe || b.scribe),
+    billing: Boolean(a.billing || b.billing),
+  };
+}
+
+function andModules(a: UserModulesSettings, b: UserModulesSettings): UserModulesSettings {
+  return {
+    admissions: Boolean(a.admissions && b.admissions),
+    adminAgent: Boolean(a.adminAgent && b.adminAgent),
+    scribe: Boolean(a.scribe && b.scribe),
+    billing: Boolean(a.billing && b.billing),
+  };
+}
+
+function sanitizeRole(role: string | null | undefined): string {
+  return String(role || '').trim().slice(0, 64);
+}
+
+function normalizeOnboardingSelection(payload: unknown): UserModulesSettings {
+  if (!payload || typeof payload !== 'object') {
+    return { ...DEFAULT_USER_MODULES };
+  }
+  const input = payload as Partial<Record<OnboardingModuleKey, unknown>>;
+  return {
+    admissions: Boolean(input.admissions),
+    adminAgent: Boolean(input.adminAgent),
+    scribe: Boolean(input.scribe),
+    billing: Boolean(input.billing),
+  };
+}
+
+export interface SubmitOnboardingInput {
+  role: string;
+  specialtyKey: string;
+  subspecialtyKey?: string | null;
+  selectedModules: unknown;
+}
+
+interface OnboardingProfileRow {
+  specialty_id: string | null;
+  subspecialty_id: string | null;
+  role: string | null;
+  onboarding_completed_at: string | null;
+}
+
+interface EntityLookup {
+  id: string;
+  key: string;
+  label: string;
+}
+
+async function resolveEntityByKey(
+  supabase: SupabaseClient,
+  table: 'specialties' | 'subspecialties',
+  key: string
+): Promise<EntityLookup | null> {
+  const normalized = String(key || '').trim().toLowerCase();
+  if (!normalized) return null;
+  const { data, error } = await supabase
+    .from(table)
+    .select('id, key, label')
+    .eq('key', normalized)
+    .maybeSingle();
+  if (error) {
+    console.error(`[practiceEntitlements] ${table} lookup failed:`, error.message);
+    throw new Error('Failed to load onboarding data.');
+  }
+  return (data as EntityLookup | null) || null;
+}
+
+async function resolveOnboardingCatalog(supabase: SupabaseClient): Promise<OnboardingCatalog> {
+  const [specialtiesRes, subspecialtiesRes] = await Promise.all([
+    supabase.from('specialties').select('key, label').order('label', { ascending: true }),
+    supabase.from('subspecialties').select('key, label, specialty_id'),
+  ]);
+  if (specialtiesRes.error || subspecialtiesRes.error) {
+    console.error(
+      '[practiceEntitlements] onboarding catalog lookup failed:',
+      specialtiesRes.error?.message || subspecialtiesRes.error?.message
+    );
+    throw new Error('Failed to load onboarding catalog.');
+  }
+
+  const specialtiesById = new Map<string, { key: string; label: string }>();
+  for (const raw of specialtiesRes.data || []) {
+    const row = raw as { key: string; label: string; id?: string };
+    if (row.id) specialtiesById.set(row.id, { key: row.key, label: row.label });
+  }
+  // Ensure we have ids for mapping subspecialties.
+  const specialtiesWithIds = await supabase.from('specialties').select('id, key, label');
+  if (!specialtiesWithIds.error) {
+    for (const row of specialtiesWithIds.data || []) {
+      specialtiesById.set((row as { id: string }).id, {
+        key: (row as { key: string }).key,
+        label: (row as { label: string }).label,
+      });
+    }
+  }
+
+  return {
+    modules: ['admissions', 'adminAgent', 'scribe', 'billing'],
+    specialties: (specialtiesRes.data || []) as Array<{ key: string; label: string }>,
+    subspecialties: (subspecialtiesRes.data || [])
+      .map((raw) => {
+        const row = raw as { key: string; label: string; specialty_id: string };
+        const specialty = specialtiesById.get(row.specialty_id);
+        if (!specialty) return null;
+        return { key: row.key, label: row.label, specialtyKey: specialty.key };
+      })
+      .filter(Boolean) as Array<{ key: string; label: string; specialtyKey: string }>,
   };
 }
 
@@ -74,7 +200,7 @@ export async function getPracticeEntitlementsForEmail(
 
   const { data: membership, error: membershipError } = await supabase
     .from('practice_users')
-    .select('practice_id, practices ( id, name, slug )')
+    .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
     .eq('email', email)
     .maybeSingle();
 
@@ -107,18 +233,184 @@ export async function getPracticeEntitlementsForEmail(
   }
 
   const modules = practiceFeatureRowToSettings(featureRow);
+  const selectedModules = { ...modules };
+  let autoModules = { ...DEFAULT_USER_MODULES };
+  let profile: OnboardingProfile | null = null;
+
+  const onboarding = (membership as OnboardingProfileRow | null) || null;
+  if (onboarding?.specialty_id) {
+    const specialtyDefaultsRes = await supabase
+      .from('specialty_module_defaults')
+      .select('admissions, admin_agent, scribe, billing')
+      .eq('specialty_id', onboarding.specialty_id)
+      .maybeSingle();
+    if (specialtyDefaultsRes.error) {
+      console.error('[practiceEntitlements] specialty_module_defaults lookup failed:', specialtyDefaultsRes.error.message);
+      throw new Error('Failed to load practice entitlements.');
+    }
+    autoModules = orModules(autoModules, practiceFeatureRowToSettings(specialtyDefaultsRes.data));
+  }
+  if (onboarding?.subspecialty_id) {
+    const subspecialtyDefaultsRes = await supabase
+      .from('subspecialty_module_defaults')
+      .select('admissions, admin_agent, scribe, billing')
+      .eq('subspecialty_id', onboarding.subspecialty_id)
+      .maybeSingle();
+    if (subspecialtyDefaultsRes.error) {
+      console.error(
+        '[practiceEntitlements] subspecialty_module_defaults lookup failed:',
+        subspecialtyDefaultsRes.error.message
+      );
+      throw new Error('Failed to load practice entitlements.');
+    }
+    autoModules = orModules(autoModules, practiceFeatureRowToSettings(subspecialtyDefaultsRes.data));
+  }
+
+  if (onboarding) {
+    const [specialtyRes, subspecialtyRes] = await Promise.all([
+      onboarding.specialty_id
+        ? supabase.from('specialties').select('key').eq('id', onboarding.specialty_id).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      onboarding.subspecialty_id
+        ? supabase.from('subspecialties').select('key').eq('id', onboarding.subspecialty_id).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+    if (specialtyRes.error || subspecialtyRes.error) {
+      console.error(
+        '[practiceEntitlements] specialty/subspecialty key lookup failed:',
+        specialtyRes.error?.message || subspecialtyRes.error?.message
+      );
+      throw new Error('Failed to load practice entitlements.');
+    }
+    profile = {
+      role: sanitizeRole(onboarding.role),
+      specialtyKey: String((specialtyRes.data as { key?: string } | null)?.key || ''),
+      subspecialtyKey: (subspecialtyRes.data as { key?: string } | null)?.key || null,
+      completedAt: onboarding.onboarding_completed_at,
+    };
+  }
+
+  const desiredModules = orModules(selectedModules, autoModules);
+  const effectiveModules = andModules(modules, desiredModules);
   const registry = loadExtensionRegistry();
   const effective = resolveEffectiveFeatureFlags(
-    normalizeUserSettings({ modules }),
+    normalizeUserSettings({ modules: effectiveModules }),
     registry
   );
 
   return {
     effective,
-    modules,
+    selectedModules,
+    autoModules,
+    modules: effectiveModules,
     practice: practiceRecord
       ? { id: practiceRecord.id, name: practiceRecord.name, slug: practiceRecord.slug }
       : { id: membership.practice_id, name: 'Practice', slug: membership.practice_id },
+    onboardingRequired: !profile?.completedAt,
+    profile,
     source: 'database',
   };
+}
+
+export async function getOnboardingStateForEmail(userEmail: string) {
+  const email = normalizeEmail(userEmail);
+  const supabase = getSupabase();
+  if (!email || !supabase) {
+    return {
+      required: true,
+      profile: null,
+      selectedModules: { ...DEFAULT_USER_MODULES },
+      autoModules: { ...DEFAULT_USER_MODULES },
+      catalog: {
+        modules: ['admissions', 'adminAgent', 'scribe', 'billing'] as OnboardingModuleKey[],
+        specialties: [],
+        subspecialties: [],
+      },
+    };
+  }
+  const [entitlements, catalog] = await Promise.all([
+    getPracticeEntitlementsForEmail(email),
+    resolveOnboardingCatalog(supabase),
+  ]);
+  return {
+    required: entitlements.onboardingRequired,
+    profile: entitlements.profile,
+    selectedModules: entitlements.selectedModules,
+    autoModules: entitlements.autoModules,
+    catalog,
+  };
+}
+
+export async function submitOnboardingForEmail(userEmail: string, input: SubmitOnboardingInput) {
+  const email = normalizeEmail(userEmail);
+  const supabase = getSupabase();
+  if (!email || !supabase) {
+    throw new Error('Onboarding is not configured.');
+  }
+
+  const specialty = await resolveEntityByKey(supabase, 'specialties', input.specialtyKey);
+  if (!specialty) {
+    throw new Error('Invalid specialty.');
+  }
+  let subspecialtyId: string | null = null;
+  if (input.subspecialtyKey) {
+    const subspecialty = await resolveEntityByKey(supabase, 'subspecialties', input.subspecialtyKey);
+    if (!subspecialty) {
+      throw new Error('Invalid subspecialty.');
+    }
+    const subspecialtyLink = await supabase
+      .from('subspecialties')
+      .select('specialty_id')
+      .eq('id', subspecialty.id)
+      .maybeSingle();
+    if (subspecialtyLink.error || (subspecialtyLink.data as { specialty_id?: string } | null)?.specialty_id !== specialty.id) {
+      throw new Error('Subspecialty does not belong to specialty.');
+    }
+    subspecialtyId = subspecialty.id;
+  }
+
+  const { data: membership, error: membershipError } = await supabase
+    .from('practice_users')
+    .select('practice_id')
+    .eq('email', email)
+    .maybeSingle();
+  if (membershipError) {
+    console.error('[practiceEntitlements] onboarding membership lookup failed:', membershipError.message);
+    throw new Error('Failed to save onboarding.');
+  }
+  if (!membership?.practice_id) {
+    throw new Error('User is not mapped to a practice.');
+  }
+
+  const { error: profileError } = await supabase
+    .from('practice_users')
+    .update({
+      role: sanitizeRole(input.role),
+      specialty_id: specialty.id,
+      subspecialty_id: subspecialtyId,
+      onboarding_completed_at: new Date().toISOString(),
+    })
+    .eq('email', email);
+
+  const selectedModules = normalizeOnboardingSelection(input.selectedModules);
+  const { error: practiceFeaturesError } = await supabase.from('practice_features').upsert(
+    {
+      practice_id: membership.practice_id,
+      admissions: selectedModules.admissions,
+      admin_agent: selectedModules.adminAgent,
+      scribe: selectedModules.scribe,
+      billing: selectedModules.billing,
+    },
+    { onConflict: 'practice_id' }
+  );
+
+  if (profileError || practiceFeaturesError) {
+    console.error(
+      '[practiceEntitlements] onboarding submit failed:',
+      profileError?.message || practiceFeaturesError?.message
+    );
+    throw new Error('Failed to save onboarding.');
+  }
+
+  return getPracticeEntitlementsForEmail(email);
 }
