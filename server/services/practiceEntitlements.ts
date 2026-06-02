@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config';
 import { loadExtensionRegistry } from './extensionsRegistry';
 import { resolveEffectiveFeatureFlags, type EffectiveFeatureFlags } from '../../shared/featureFlags';
-import { practiceModuleRowsToSettings } from '../../shared/practiceModules';
+import { practiceFeatureRowToSettings } from '../../shared/practiceModules';
 import { DEFAULT_USER_MODULES, normalizeUserSettings, type UserModulesSettings } from '../../shared/types';
 
 export interface PracticeSummary {
@@ -95,17 +95,18 @@ export async function getPracticeEntitlementsForEmail(
 
   const practiceRecord = Array.isArray(practiceRow) ? practiceRow[0] : practiceRow;
 
-  const { data: featureRows, error: featuresError } = await supabase
+  const { data: featureRow, error: featuresError } = await supabase
     .from('practice_features')
-    .select('module, enabled')
-    .eq('practice_id', membership.practice_id);
+    .select('admissions, admin_agent, scribe, billing')
+    .eq('practice_id', membership.practice_id)
+    .maybeSingle();
 
   if (featuresError) {
     console.error('[practiceEntitlements] practice_features lookup failed:', featuresError.message);
     throw new Error('Failed to load practice entitlements.');
   }
 
-  const modules = practiceModuleRowsToSettings(featureRows || []);
+  const modules = practiceFeatureRowToSettings(featureRow);
   const registry = loadExtensionRegistry();
   const effective = resolveEffectiveFeatureFlags(
     normalizeUserSettings({ modules }),
