@@ -82,6 +82,14 @@ function sanitizeRole(role: string | null | undefined): string {
   return String(role || '').trim().slice(0, 64);
 }
 
+function slugify(input: string): string {
+  return String(input || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
 function normalizeOnboardingSelection(payload: unknown): UserModulesSettings {
   if (!payload || typeof payload !== 'object') {
     return { ...DEFAULT_USER_MODULES };
@@ -102,11 +110,16 @@ export interface SubmitOnboardingInput {
   selectedModules: unknown;
 }
 
-interface OnboardingProfileRow {
+interface MembershipRow {
+  practice_id: string;
+  role: string | null;
   specialty_id: string | null;
   subspecialty_id: string | null;
-  role: string | null;
   onboarding_completed_at: string | null;
+  practices:
+    | { id: string; name: string; slug: string }
+    | { id: string; name: string; slug: string }[]
+    | null;
 }
 
 interface EntityLookup {
@@ -132,6 +145,79 @@ async function resolveEntityByKey(
     throw new Error('Failed to load onboarding data.');
   }
   return (data as EntityLookup | null) || null;
+}
+
+async function ensurePracticeMembershipByEmail(
+  supabase: SupabaseClient,
+  email: string
+): Promise<MembershipRow> {
+  const normalizedEmail = normalizeEmail(email);
+
+  const existing = await supabase
+    .from('practice_users')
+    .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
+    .eq('email', normalizedEmail)
+    .maybeSingle();
+  if (existing.error) {
+    console.error('[practiceEntitlements] practice_users lookup failed:', existing.error.message);
+    throw new Error('Failed to load practice entitlements.');
+  }
+  if (existing.data?.practice_id) {
+    return existing.data as MembershipRow;
+  }
+
+  const localPart = normalizedEmail.split('@')[0] || 'user';
+  const baseSlug = `${slugify(localPart) || 'user'}-practice`;
+  const slug = `${baseSlug}-${Math.random().toString(36).slice(2, 8)}`;
+  const practiceName = `${localPart} Practice`;
+
+  const createdPractice = await supabase
+    .from('practices')
+    .insert({ name: practiceName, slug })
+    .select('id, name, slug')
+    .single();
+  if (createdPractice.error || !createdPractice.data?.id) {
+    console.error('[practiceEntitlements] auto-create practice failed:', createdPractice.error?.message);
+    throw new Error('Failed to auto-provision user practice.');
+  }
+
+  const practiceId = createdPractice.data.id as string;
+  const [userInsert, featuresInsert] = await Promise.all([
+    supabase.from('practice_users').insert({
+      practice_id: practiceId,
+      email: normalizedEmail,
+      role: 'clinician',
+    }),
+    supabase.from('practice_features').upsert(
+      {
+        practice_id: practiceId,
+        admissions: DEFAULT_USER_MODULES.admissions,
+        admin_agent: DEFAULT_USER_MODULES.adminAgent,
+        scribe: DEFAULT_USER_MODULES.scribe,
+        billing: DEFAULT_USER_MODULES.billing,
+      },
+      { onConflict: 'practice_id' }
+    ),
+  ]);
+
+  if (userInsert.error || featuresInsert.error) {
+    console.error(
+      '[practiceEntitlements] auto-provision membership/features failed:',
+      userInsert.error?.message || featuresInsert.error?.message
+    );
+    throw new Error('Failed to auto-provision user membership.');
+  }
+
+  const provisioned = await supabase
+    .from('practice_users')
+    .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
+    .eq('email', normalizedEmail)
+    .maybeSingle();
+  if (provisioned.error || !provisioned.data?.practice_id) {
+    console.error('[practiceEntitlements] reload auto-provisioned membership failed:', provisioned.error?.message);
+    throw new Error('Failed to load auto-provisioned membership.');
+  }
+  return provisioned.data as MembershipRow;
 }
 
 async function resolveOnboardingCatalog(supabase: SupabaseClient): Promise<OnboardingCatalog> {
@@ -198,27 +284,9 @@ export async function getPracticeEntitlementsForEmail(
     return defaultEntitlements();
   }
 
-  const { data: membership, error: membershipError } = await supabase
-    .from('practice_users')
-    .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
-    .eq('email', email)
-    .maybeSingle();
+  const membership = await ensurePracticeMembershipByEmail(supabase, email);
 
-  if (membershipError) {
-    console.error('[practiceEntitlements] practice_users lookup failed:', membershipError.message);
-    throw new Error('Failed to load practice entitlements.');
-  }
-
-  if (!membership?.practice_id) {
-    console.warn(`[practiceEntitlements] No practice_users row for ${email}; using default modules.`);
-    return defaultEntitlements();
-  }
-
-  const practiceRow = membership.practices as
-    | { id: string; name: string; slug: string }
-    | { id: string; name: string; slug: string }[]
-    | null;
-
+  const practiceRow = membership.practices;
   const practiceRecord = Array.isArray(practiceRow) ? practiceRow[0] : practiceRow;
 
   const { data: featureRow, error: featuresError } = await supabase
@@ -237,7 +305,7 @@ export async function getPracticeEntitlementsForEmail(
   let autoModules = { ...DEFAULT_USER_MODULES };
   let profile: OnboardingProfile | null = null;
 
-  const onboarding = (membership as OnboardingProfileRow | null) || null;
+  const onboarding = membership;
   if (onboarding?.specialty_id) {
     const specialtyDefaultsRes = await supabase
       .from('specialty_module_defaults')
@@ -369,18 +437,7 @@ export async function submitOnboardingForEmail(userEmail: string, input: SubmitO
     subspecialtyId = subspecialty.id;
   }
 
-  const { data: membership, error: membershipError } = await supabase
-    .from('practice_users')
-    .select('practice_id')
-    .eq('email', email)
-    .maybeSingle();
-  if (membershipError) {
-    console.error('[practiceEntitlements] onboarding membership lookup failed:', membershipError.message);
-    throw new Error('Failed to save onboarding.');
-  }
-  if (!membership?.practice_id) {
-    throw new Error('User is not mapped to a practice.');
-  }
+  const membership = await ensurePracticeMembershipByEmail(supabase, email);
 
   const { error: profileError } = await supabase
     .from('practice_users')
