@@ -35,6 +35,8 @@ export const OnboardingModal: React.FC<Props> = ({ isOpen, state, submitting, on
   }, [specialtyKey, state?.catalog?.subspecialties]);
 
   if (!isOpen) return null;
+  const specialties = state?.catalog?.specialties || [];
+  const canSubmit = specialties.length > 0 && !submitting;
 
   const toggleModule = (key: keyof UserModulesSettings) => {
     setSelectedModules((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -87,15 +89,23 @@ export const OnboardingModal: React.FC<Props> = ({ isOpen, state, submitting, on
                   setSpecialtyKey(e.target.value);
                   setSubspecialtyKey('');
                 }}
+                disabled={specialties.length === 0}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100 outline-none"
               >
                 <option value="">Select specialty</option>
-                {(state?.catalog?.specialties || []).map((s) => (
+                {specialties.map((s) => (
                   <option key={s.key} value={s.key}>{s.label}</option>
                 ))}
               </select>
             </label>
           </div>
+
+          {specialties.length === 0 ? (
+            <p className="text-sm text-rose-600">
+              No specialties are configured yet. Run the onboarding migration/seed in Supabase,
+              then refresh and sign in again.
+            </p>
+          ) : null}
 
           <label className="block">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subspecialty (optional)</span>
@@ -143,7 +153,7 @@ export const OnboardingModal: React.FC<Props> = ({ isOpen, state, submitting, on
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50">
           <button
             onClick={submit}
-            disabled={submitting}
+            disabled={!canSubmit}
             className="w-full rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2.5 disabled:opacity-60 flex items-center justify-center gap-2"
           >
             {submitting ? <Loader2 size={16} className="animate-spin" /> : null}

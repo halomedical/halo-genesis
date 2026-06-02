@@ -223,7 +223,10 @@ export const App = () => {
           fetchOnboardingState().then((state) => {
             setOnboardingState(state);
             setOnboardingRequired(Boolean(state.required));
-          }).catch(() => {});
+          }).catch((error) => {
+            console.error('Load onboarding state error:', error);
+            showToast('Onboarding setup could not be loaded. Check specialties in Supabase.', 'error');
+          });
 
         }
       } catch (error) {
@@ -232,7 +235,7 @@ export const App = () => {
       setIsReady(true);
     };
     checkSession();
-  }, []);
+  }, [refreshPatients, selectPatient, showToast]);
 
   const handleSignIn = async () => {
     setLoading(true);
