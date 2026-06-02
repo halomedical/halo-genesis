@@ -31,7 +31,11 @@ import {
 // Scheduler disabled; run-scheduler and scheduler-status kept for optional manual use
 import { runSchedulerNow, getSchedulerStatus } from '../jobs/scheduler';
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../shared/types';
-import { getPracticeEntitlementsForEmail } from '../services/practiceEntitlements';
+import {
+  getPracticeEntitlementsForEmail,
+  getOnboardingStateForEmail,
+  submitOnboardingForEmail,
+} from '../services/practiceEntitlements';
 import type { AdmissionsBoard, ScribeSession } from '../../shared/types';
 import { getVpsJwt, getVpsConfig, setVpsConfig } from '../services/vpsApi';
 import { requireFeature } from '../middleware/requireFeature';
@@ -1774,11 +1778,67 @@ router.get('/features', async (req: Request, res: Response) => {
     res.json({
       effective: entitlements.effective,
       practice: entitlements.practice,
+      onboardingRequired: entitlements.onboardingRequired,
+      profile: entitlements.profile,
+      selectedModules: entitlements.selectedModules,
+      autoModules: entitlements.autoModules,
       source: entitlements.source,
     });
   } catch (err) {
     console.error('Load feature flags error:', err);
     res.status(500).json({ error: 'Failed to load feature flags.' });
+  }
+});
+
+// GET /onboarding/state
+router.get('/onboarding/state', async (req: Request, res: Response) => {
+  try {
+    const userEmail = req.session.userEmail!;
+    const state = await getOnboardingStateForEmail(userEmail);
+    res.json(state);
+  } catch (err) {
+    console.error('Load onboarding state error:', err);
+    res.status(500).json({ error: 'Failed to load onboarding state.' });
+  }
+});
+
+// POST /onboarding/complete
+router.post('/onboarding/complete', async (req: Request, res: Response) => {
+  try {
+    const userEmail = req.session.userEmail!;
+    const role = typeof req.body?.role === 'string' ? req.body.role : '';
+    const specialtyKey = typeof req.body?.specialtyKey === 'string' ? req.body.specialtyKey : '';
+    const subspecialtyKey =
+      typeof req.body?.subspecialtyKey === 'string' ? req.body.subspecialtyKey : null;
+    const selectedModules = req.body?.selectedModules;
+
+    if (!specialtyKey) {
+      res.status(400).json({ error: 'specialtyKey is required.' });
+      return;
+    }
+
+    const entitlements = await submitOnboardingForEmail(userEmail, {
+      role,
+      specialtyKey,
+      subspecialtyKey,
+      selectedModules,
+    });
+
+    res.json({
+      success: true,
+      effective: entitlements.effective,
+      practice: entitlements.practice,
+      onboardingRequired: entitlements.onboardingRequired,
+      profile: entitlements.profile,
+      selectedModules: entitlements.selectedModules,
+      autoModules: entitlements.autoModules,
+      source: entitlements.source,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to complete onboarding.';
+    const status = /invalid|required/i.test(message) ? 400 : 500;
+    console.error('Complete onboarding error:', err);
+    res.status(status).json({ error: message });
   }
 });
 
