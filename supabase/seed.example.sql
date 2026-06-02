@@ -14,21 +14,18 @@ where p.slug = 'demo-ortho'
 on conflict (email) do update
   set practice_id = excluded.practice_id;
 
-insert into public.practice_features (practice_id, module, enabled)
-select p.id, v.module, v.enabled
+insert into public.practice_features (practice_id, admissions, admin_agent, scribe, billing)
+select p.id, false, false, true, true
 from public.practices p
-cross join (
-  values
-    ('scribe', true),
-    ('billing', true),
-    ('admin_agent', false),
-    ('admissions', false)
-) as v(module, enabled)
 where p.slug = 'demo-ortho'
-on conflict (practice_id, module) do update set enabled = excluded.enabled;
+on conflict (practice_id) do update set
+  admissions = excluded.admissions,
+  admin_agent = excluded.admin_agent,
+  scribe = excluded.scribe,
+  billing = excluded.billing;
 
 -- Enable billing later for that practice:
--- update public.practice_features pf
--- set enabled = true
+-- update public.practice_features
+-- set billing = true
 -- from public.practices p
--- where pf.practice_id = p.id and p.slug = 'demo-ortho' and pf.module = 'billing';
+-- where practice_features.practice_id = p.id and p.slug = 'demo-ortho';
