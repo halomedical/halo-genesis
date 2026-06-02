@@ -32,6 +32,11 @@ import {
 import { runSchedulerNow, getSchedulerStatus } from '../jobs/scheduler';
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../shared/types';
 import { getPracticeEntitlementsForEmail } from '../services/practiceEntitlements';
+import {
+  addPracticeUserForEmail,
+  getPracticeUsersForEmail,
+  removePracticeUserForEmail,
+} from '../services/practiceEntitlements';
 import type { AdmissionsBoard, ScribeSession } from '../../shared/types';
 import { getVpsJwt, getVpsConfig, setVpsConfig } from '../services/vpsApi';
 import { requireFeature } from '../middleware/requireFeature';
@@ -1779,6 +1784,56 @@ router.get('/features', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Load feature flags error:', err);
     res.status(500).json({ error: 'Failed to load feature flags.' });
+  }
+});
+
+// GET /practice-users
+router.get('/practice-users', async (req: Request, res: Response) => {
+  try {
+    const userEmail = req.session.userEmail!;
+    const users = await getPracticeUsersForEmail(userEmail);
+    res.json({ users });
+  } catch (err) {
+    console.error('Load practice users error:', err);
+    const message = err instanceof Error ? err.message : 'Failed to load practice users.';
+    res.status(500).json({ error: message });
+  }
+});
+
+// POST /practice-users
+router.post('/practice-users', async (req: Request, res: Response) => {
+  try {
+    const requesterEmail = req.session.userEmail!;
+    const email = sanitizeString(req.body?.email, 320).toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      res.status(400).json({ error: 'A valid email is required.' });
+      return;
+    }
+    const users = await addPracticeUserForEmail(requesterEmail, email);
+    res.json({ users });
+  } catch (err) {
+    console.error('Add practice user error:', err);
+    const message = err instanceof Error ? err.message : 'Failed to add practice user.';
+    res.status(500).json({ error: message });
+  }
+});
+
+// DELETE /practice-users/:email
+router.delete('/practice-users/:email', async (req: Request, res: Response) => {
+  try {
+    const requesterEmail = req.session.userEmail!;
+    const emailParam = getRouteParam(req.params.email);
+    const email = sanitizeString(decodeURIComponent(emailParam), 320).toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      res.status(400).json({ error: 'A valid email is required.' });
+      return;
+    }
+    const users = await removePracticeUserForEmail(requesterEmail, email);
+    res.json({ users });
+  } catch (err) {
+    console.error('Remove practice user error:', err);
+    const message = err instanceof Error ? err.message : 'Failed to remove practice user.';
+    res.status(500).json({ error: message });
   }
 });
 

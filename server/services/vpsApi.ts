@@ -227,6 +227,177 @@ export async function setVpsConfig(vpsJwt: string, key: string, value: string): 
   await vpsPost('/doctor/config', { key, value }, vpsJwt);
 }
 
+// --- Admin portal config ---
+
+export type AdminPortalRole = 'owner' | 'administrator' | 'clinician' | 'nurse' | 'patient';
+
+export interface AdminPortalPermissionMatrix {
+  owner: {
+    bypass_feature_gates: true;
+    practice_documentation: true;
+    calendar_management: true;
+    communication_gateway: true;
+    allow_folder_deletion: true;
+    allow_global_email: true;
+    allow_practice_admin_write: true;
+  };
+  administrator: {
+    practice_documentation: boolean;
+    calendar_management: boolean;
+    communication_gateway: boolean;
+    allow_folder_deletion: boolean;
+    allow_global_email: boolean;
+    allow_practice_admin_write: boolean;
+    can_trash_patient_directory: boolean;
+  };
+  clinician: {
+    practice_documentation_read_only: boolean;
+    core_workflows: boolean;
+  };
+  nurse: {
+    schedule_adjustments: boolean;
+    clinical_file_view: boolean;
+  };
+  patient: {
+    communications_interface_only: boolean;
+  };
+}
+
+export interface AdminPortalPolicyFlags {
+  allow_folder_deletion: boolean;
+  allow_global_email: boolean;
+  allow_practice_admin_write: boolean;
+}
+
+export interface AdminPortalSettingsSchema {
+  practice_id: string;
+  feature_toggles: {
+    practice_documentation: boolean;
+    calendar_management: boolean;
+    communication_gateway: boolean;
+  };
+  roles: AdminPortalPermissionMatrix;
+  policy_flags: AdminPortalPolicyFlags;
+}
+
+export interface AdminPortalDeletionConfirmationTask {
+  task_type: 'patient_directory_deletion_confirmation';
+  practice_id: string;
+  patient_folder_id: string;
+  patient_folder_name: string;
+  archived_folder_name: string;
+  message: 'Patient info is deleted, please confirm';
+  target_workspace_layout: 'doctor_owner_security_workspace';
+  recipients: Array<'doctor' | 'owner'>;
+  requires_interactive_confirmation: true;
+  created_at: string;
+}
+
+export function getDefaultAdminPortalSettings(practiceId: string): AdminPortalSettingsSchema {
+  return {
+    practice_id: practiceId,
+    feature_toggles: {
+      practice_documentation: true,
+      calendar_management: true,
+      communication_gateway: true,
+    },
+    roles: {
+      owner: {
+        bypass_feature_gates: true,
+        practice_documentation: true,
+        calendar_management: true,
+        communication_gateway: true,
+        allow_folder_deletion: true,
+        allow_global_email: true,
+        allow_practice_admin_write: true,
+      },
+      administrator: {
+        practice_documentation: true,
+        calendar_management: true,
+        communication_gateway: true,
+        allow_folder_deletion: true,
+        allow_global_email: true,
+        allow_practice_admin_write: true,
+        can_trash_patient_directory: true,
+      },
+      clinician: {
+        practice_documentation_read_only: true,
+        core_workflows: true,
+      },
+      nurse: {
+        schedule_adjustments: true,
+        clinical_file_view: true,
+      },
+      patient: {
+        communications_interface_only: true,
+      },
+    },
+    policy_flags: {
+      allow_folder_deletion: false,
+      allow_global_email: false,
+      allow_practice_admin_write: false,
+    },
+  };
+}
+
+export function buildDeletionConfirmationTask(params: {
+  practiceId: string;
+  patientFolderId: string;
+  patientFolderName: string;
+  archivedFolderName: string;
+}): AdminPortalDeletionConfirmationTask {
+  return {
+    task_type: 'patient_directory_deletion_confirmation',
+    practice_id: params.practiceId,
+    patient_folder_id: params.patientFolderId,
+    patient_folder_name: params.patientFolderName,
+    archived_folder_name: params.archivedFolderName,
+    message: 'Patient info is deleted, please confirm',
+    target_workspace_layout: 'doctor_owner_security_workspace',
+    recipients: ['doctor', 'owner'],
+    requires_interactive_confirmation: true,
+    created_at: new Date().toISOString(),
+  };
+}
+
+const ADMIN_PORTAL_SETTINGS_KEY = 'admin_portal_settings';
+const ADMIN_PORTAL_DELETION_TASKS_KEY = 'admin_portal_deletion_confirmation_tasks';
+
+export async function getAdminPortalSettings(vpsJwt: string): Promise<AdminPortalSettingsSchema | null> {
+  try {
+    const data = await vpsGet<{ value: string }>(`/doctor/config/${ADMIN_PORTAL_SETTINGS_KEY}`, vpsJwt);
+    return JSON.parse(data.value) as AdminPortalSettingsSchema;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveAdminPortalSettings(vpsJwt: string, settings: AdminPortalSettingsSchema): Promise<void> {
+  await vpsPost('/doctor/config', { key: ADMIN_PORTAL_SETTINGS_KEY, value: JSON.stringify(settings) }, vpsJwt);
+}
+
+export async function enqueueDeletionConfirmationTask(
+  vpsJwt: string,
+  task: AdminPortalDeletionConfirmationTask
+): Promise<void> {
+  try {
+    let existing: AdminPortalDeletionConfirmationTask[] = [];
+    try {
+      const data = await vpsGet<{ value: string }>(`/doctor/config/${ADMIN_PORTAL_DELETION_TASKS_KEY}`, vpsJwt);
+      existing = JSON.parse(data.value) as AdminPortalDeletionConfirmationTask[];
+    } catch {
+      existing = [];
+    }
+    existing.push(task);
+    await vpsPost('/doctor/config', {
+      key: ADMIN_PORTAL_DELETION_TASKS_KEY,
+      value: JSON.stringify(existing.slice(-200)),
+    }, vpsJwt);
+  } catch {
+    // Non-fatal queue operation.
+  }
+}
+
 // --- Billing cap ---
 
 export async function getBillingCap(vpsJwt: string): Promise<number | null> {

@@ -149,7 +149,8 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
 }
 
 // --- AUTH ---
-export const getLoginUrl = () => request<{ url: string }>('/api/auth/login-url');
+export const getLoginUrl = (portal: 'clinician' | 'admin' = 'clinician') =>
+  request<{ url: string }>(`/api/auth/login-url?portal=${encodeURIComponent(portal)}`);
 export const checkAuth = () => request<{ signedIn: boolean; email?: string }>('/api/auth/me');
 export const logout = () => request('/api/auth/logout', { method: 'POST' });
 export const fetchEffectiveFeatures = () =>
@@ -360,10 +361,29 @@ export interface PatientImportResponse {
   failed: PatientImportSummaryItem[];
 }
 
+export interface PracticeUser {
+  email: string;
+  practiceId: string;
+}
+
 export const importPatientsJson = (payload: unknown) =>
   request<PatientImportResponse>('/api/drive/patients/import', {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+
+export const fetchPracticeUsers = () =>
+  request<{ users: PracticeUser[] }>('/api/drive/practice-users');
+
+export const addPracticeUser = (email: string) =>
+  request<{ users: PracticeUser[] }>('/api/drive/practice-users', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
+export const removePracticeUser = (email: string) =>
+  request<{ users: PracticeUser[] }>(`/api/drive/practice-users/${encodeURIComponent(email)}`, {
+    method: 'DELETE',
   });
 
 // --- SCRIBE SESSIONS (per patient) ---

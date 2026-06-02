@@ -18,6 +18,12 @@ import { AdmissionsPage } from './pages/AdmissionsPage';
 import { MarketplacePage } from './pages/MarketplacePage';
 
 export const App = () => {
+  const initialAuthView = (() => {
+    if (typeof window === 'undefined') return 'clinician' as const;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('portal') === 'admin' ? 'admin' as const : 'clinician' as const;
+  })();
+
   const [patients, setPatients] = useState<Patient[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
     () => sessionStorage.getItem('halo_selectedPatientId')
@@ -83,6 +89,7 @@ export const App = () => {
   const [workspaceIntent, setWorkspaceIntent] = useState<WorkspaceNavigationIntent | null>(null);
   const [adminAgentOpen, setAdminAgentOpen] = useState(false);
   const [showAgentOnboarding, setShowAgentOnboarding] = useState(false);
+  const [authPortalView, setAuthPortalView] = useState<'clinician' | 'admin'>(initialAuthView);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -111,6 +118,13 @@ export const App = () => {
       setActiveMainView('workspace');
     }
   }, [activeMainView, effectiveFeatures?.billing]);
+
+  useEffect(() => {
+    if (!isSignedIn) return;
+    if (authPortalView === 'admin') {
+      setActiveMainView('marketplace');
+    }
+  }, [isSignedIn, authPortalView]);
 
   const adminAgentEnabled = effectiveFeatures?.adminAgent ?? false;
 
@@ -222,7 +236,7 @@ export const App = () => {
     setLoading(true);
     try {
       console.log('Fetching login URL...');
-      const { url } = await getLoginUrl();
+      const { url } = await getLoginUrl(authPortalView);
       console.log('Got login URL:', url);
       if (url) {
         window.location.href = url;
@@ -233,6 +247,27 @@ export const App = () => {
       console.error('Sign in error:', error);
       showToast(getErrorMessage(error), 'error');
       setLoading(false);
+    }
+  };
+
+  const switchAuthPortalView = (next: 'clinician' | 'admin') => {
+    setAuthPortalView(next);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (next === 'admin') {
+      url.searchParams.set('portal', 'admin');
+    } else {
+      url.searchParams.delete('portal');
+    }
+    window.history.replaceState({}, '', url.toString());
+  };
+
+  const switchSignedInPortalView = (next: 'clinician' | 'admin') => {
+    switchAuthPortalView(next);
+    if (next === 'admin') {
+      setActiveMainView('marketplace');
+    } else {
+      setActiveMainView('workspace');
     }
   };
 
@@ -391,6 +426,7 @@ export const App = () => {
   }
 
   if (!isSignedIn) {
+    const isAdminPortal = authPortalView === 'admin';
     return (
       <div className="flex h-screen w-full items-center justify-center bg-white">
         <div className="max-w-sm w-full text-center px-6">
@@ -400,8 +436,14 @@ export const App = () => {
             className="w-44 h-auto mx-auto mb-6 select-none"
             draggable={false}
           />
-          <h1 className="text-3xl font-bold text-slate-800 mb-2">Welcome to HALO</h1>
-          <p className="text-slate-500 mb-8 leading-relaxed">Sign in to access your Secure Patient Drive.</p>
+          <h1 className="text-3xl font-bold text-slate-800 mb-2">
+            {isAdminPortal ? 'Admin Portal Sign In' : 'Welcome to HALO'}
+          </h1>
+          <p className="text-slate-500 mb-8 leading-relaxed">
+            {isAdminPortal
+              ? 'Sign in to access the Practice Administration workspace.'
+              : 'Sign in to access your Secure Patient Drive.'}
+          </p>
 
           <button
             onClick={handleSignIn}
@@ -409,6 +451,13 @@ export const App = () => {
           >
             {loading ? <Loader className="animate-spin" size={18} /> : <LogIn size={18} />}
             {loading ? 'Connecting…' : 'Sign In with Google'}
+          </button>
+
+          <button
+            onClick={() => switchAuthPortalView(isAdminPortal ? 'clinician' : 'admin')}
+            className="w-full mt-3 flex items-center justify-center gap-3 border border-slate-200 hover:border-slate-300 text-slate-700 px-6 py-3 rounded-xl transition-all font-semibold text-sm bg-white hover:bg-slate-50 active:scale-[0.99]"
+          >
+            {isAdminPortal ? 'Switch to Clinician Portal' : 'Switch to Admin Portal'}
           </button>
 
           <p className="mt-8 text-xs text-slate-400">Secure Environment · POPIA Compliant</p>
@@ -589,6 +638,8 @@ export const App = () => {
         onToast={showToast}
         effectiveFeatures={effectiveFeatures}
         practiceName={practiceInfo?.name ?? null}
+        portalView={authPortalView}
+        onSwitchPortalView={switchSignedInPortalView}
       />
 
       {/* CREATE PATIENT MODAL */}

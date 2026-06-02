@@ -119,6 +119,20 @@ export async function driveRequest(token: string, path: string, options: Request
   return data;
 }
 
+export async function archiveFolderPendingConfirmation(
+  token: string,
+  folderId: string,
+  currentName: string
+): Promise<string> {
+  const suffix = '_DELETED_PENDING_CONFIRMATION';
+  const archivedName = currentName.endsWith(suffix) ? currentName : `${currentName}${suffix}`;
+  await driveRequest(token, `/files/${folderId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name: archivedName }),
+  });
+  return archivedName;
+}
+
 /**
  * Find or create the Halo root folder in Google Drive.
  */

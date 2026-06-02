@@ -4,6 +4,11 @@ import { getHaloRootFolder } from '../services/drive';
 
 const router = Router();
 
+function getRequestedPortal(value: unknown): 'admin' | 'clinician' {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return raw === 'admin' ? 'admin' : 'clinician';
+}
+
 const getRedirectUri = (req?: Request): string => {
   if (config.isProduction) {
     // Use the actual request host so the redirect URI always matches
@@ -33,6 +38,8 @@ router.get('/login-url', (_req: Request, res: Response) => {
   ].join(' ');
 
   const redirectUri = getRedirectUri(_req);
+  const portal = getRequestedPortal(_req.query.portal);
+  const state = portal === 'admin' ? 'portal:admin' : 'portal:clinician';
 
   const url =
     'https://accounts.google.com/o/oauth2/v2/auth?' +
@@ -41,13 +48,16 @@ router.get('/login-url', (_req: Request, res: Response) => {
     `&response_type=code` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&access_type=offline` +
-    `&prompt=consent`;
+    `&prompt=consent` +
+    `&state=${encodeURIComponent(state)}`;
 
   res.json({ url });
 });
 
 router.get('/callback', async (req: Request, res: Response) => {
   const code = req.query.code as string | undefined;
+  const state = typeof req.query.state === 'string' ? req.query.state : '';
+  const portal = state === 'portal:admin' ? 'admin' : 'clinician';
 
   if (!code || typeof code !== 'string') {
     res.status(400).json({ error: 'Missing or invalid authorization code.' });
@@ -126,7 +136,10 @@ router.get('/callback', async (req: Request, res: Response) => {
     // Save session before redirecting so the cookie is written first.
     // In production the server serves the React app, so redirect to root.
     // In development redirect to the Vite dev server.
-    const redirectTarget = config.isProduction ? '/' : config.clientUrl;
+    const baseTarget = config.isProduction ? '/' : config.clientUrl;
+    const redirectTarget = portal === 'admin'
+      ? `${baseTarget}${baseTarget.includes('?') ? '&' : '?'}portal=admin`
+      : baseTarget;
     req.session.save((saveErr) => {
       if (saveErr) {
         console.error('Session save error:', saveErr);

@@ -37,5 +37,27 @@
     "billing_model": "sliding_percentage",
     "version": "1.0.0",
     "built_by": "halo-genesis/modules"
+  },
+  {
+    "id": "admin_portal",
+    "display_name": "Admin Portal",
+    "description": "Practice administration controls, calendar operations, and communication gateway orchestration",
+    "specialty_tags": ["all"],
+    "required_endpoints": ["drive-adapter", "vps-api", "automation-runner"],
+    "required_config_keys": [
+      "features.admin_portal.practice_documentation",
+      "features.admin_portal.calendar_management",
+      "features.admin_portal.communication_gateway"
+    ],
+    "feature_toggles": {
+      "practice_documentation": true,
+      "calendar_management": true,
+      "communication_gateway": true
+    },
+    "ui_surface": "admin-portal",
+    "minimum_tier": "practice",
+    "billing_model": "per_practice",
+    "version": "1.0.0",
+    "built_by": "halo-genesis/modules"
   }
 ]

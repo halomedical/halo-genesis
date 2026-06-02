@@ -8,8 +8,16 @@
  */
 
 import { config } from '../config';
+import { driveRequest, getHaloRootFolder, archiveFolderPendingConfirmation } from '../services/drive';
 import { getVpsJwt } from '../services/vpsApi';
 import { getAutomations, appendTaskLog, saveAutomations } from '../services/vpsApi';
+import {
+  buildDeletionConfirmationTask,
+  enqueueDeletionConfirmationTask,
+  getAdminPortalSettings,
+  getDefaultAdminPortalSettings,
+  saveAdminPortalSettings,
+} from '../services/vpsApi';
 import type { Automation } from '../agent/capabilities';
 
 const RUNNER_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
@@ -18,6 +26,10 @@ interface DoctorSession {
   email: string;
   driveRefreshToken: string;
   registeredAt: number;
+}
+
+function derivePracticeId(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 // In-memory store: email → session. Populated from authenticated requests.
@@ -86,6 +98,11 @@ async function executeAutomation(
 
   // Stub implementations per preset type
   switch (automation.id) {
+    case 'admin_portal_bootstrap':
+      // Ensure practice administration folder hierarchy exists.
+      await ensurePracticeAdministrationStructure(driveToken);
+      return { result: 'success', note: 'Admin portal drive structure verified.' };
+
     case 'email_monitor':
       // Would: scan Gmail inbox, classify emails, draft letters, save to Review
       return { result: 'partial', note: 'Email monitor ran — full execution pending Gmail capability.' };
@@ -111,6 +128,67 @@ async function executeAutomation(
   }
 }
 
+async function ensureFolderInParent(
+  token: string,
+  parentId: string,
+  folderName: string
+): Promise<string> {
+  const q = encodeURIComponent(
+    `'${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and name='${folderName.replace(/'/g, "\\'")}' and trashed=false`
+  );
+  const existing = await driveRequest(token, `/files?q=${q}&fields=files(id,name)`) as {
+    files?: Array<{ id: string; name: string }>;
+  };
+  if (existing.files?.[0]?.id) return existing.files[0].id;
+
+  const created = await driveRequest(token, '/files', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: folderName,
+      parents: [parentId],
+      mimeType: 'application/vnd.google-apps.folder',
+    }),
+  });
+  if (!created.id) throw new Error(`Could not create folder: ${folderName}`);
+  return created.id;
+}
+
+async function ensurePracticeAdministrationStructure(driveToken: string): Promise<void> {
+  const rootId = await getHaloRootFolder(driveToken);
+  const adminRootId = await ensureFolderInParent(driveToken, rootId, 'Practice Administration');
+  await ensureFolderInParent(driveToken, adminRootId, 'Patient document');
+  await ensureFolderInParent(driveToken, adminRootId, 'Practice admin');
+  await ensureFolderInParent(driveToken, adminRootId, 'Clinical admin');
+}
+
+export async function archivePatientFolderWithConfirmation(params: {
+  driveToken: string;
+  vpsJwt: string;
+  practiceId: string;
+  patientFolderId: string;
+  patientFolderName: string;
+}): Promise<{ archivedFolderName: string }> {
+  const settings = await getAdminPortalSettings(params.vpsJwt)
+    ?? getDefaultAdminPortalSettings(params.practiceId);
+  if (!settings.practice_id) settings.practice_id = params.practiceId;
+  await saveAdminPortalSettings(params.vpsJwt, settings);
+
+  const archivedFolderName = await archiveFolderPendingConfirmation(
+    params.driveToken,
+    params.patientFolderId,
+    params.patientFolderName
+  );
+
+  const task = buildDeletionConfirmationTask({
+    practiceId: params.practiceId,
+    patientFolderId: params.patientFolderId,
+    patientFolderName: params.patientFolderName,
+    archivedFolderName,
+  });
+  await enqueueDeletionConfirmationTask(params.vpsJwt, task);
+  return { archivedFolderName };
+}
+
 async function runForDoctor(session: DoctorSession): Promise<void> {
   let driveToken: string;
   try {
@@ -126,6 +204,17 @@ async function runForDoctor(session: DoctorSession): Promise<void> {
   } catch (err) {
     console.error(`[AutomationRunner] Could not get VPS JWT for ${session.email}:`, err);
     return;
+  }
+
+  // Ensure default admin portal schema exists and drive structure is present.
+  try {
+    const settings = await getAdminPortalSettings(vpsJwt);
+    if (!settings) {
+      await saveAdminPortalSettings(vpsJwt, getDefaultAdminPortalSettings(derivePracticeId(session.email)));
+    }
+    await ensurePracticeAdministrationStructure(driveToken);
+  } catch (err) {
+    console.warn(`[AutomationRunner] Admin portal bootstrap warning for ${session.email}:`, err);
   }
 
   let automations: Automation[];

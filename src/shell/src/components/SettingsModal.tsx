@@ -5,10 +5,10 @@ import type { EffectiveFeatureFlags } from '../../../../shared/featureFlags';
 import {
   X, Pencil, Save, User, Clock, Briefcase, MapPin, GraduationCap,
   FileText, Upload, Check, AlertCircle, Send, Plus, LayoutPanelTop,
-  CreditCard,
+  CreditCard, Users, Trash2,
 } from 'lucide-react';
-import { requestNewTemplate } from '../services/api';
-import type { PatientImportResponse } from '../services/api';
+import { addPracticeUser, fetchPracticeUsers, removePracticeUser, requestNewTemplate } from '../services/api';
+import type { PatientImportResponse, PracticeUser } from '../services/api';
 
 const HALO_TEMPLATE_OPTIONS = [
   { id: 'clinical_note', name: 'Clinical Note' },
@@ -29,6 +29,8 @@ interface Props {
   onToast?: (message: string, type: 'success' | 'error' | 'info') => void;
   effectiveFeatures?: EffectiveFeatureFlags | null;
   practiceName?: string | null;
+  portalView?: 'clinician' | 'admin';
+  onSwitchPortalView?: (next: 'clinician' | 'admin') => void;
 }
 
 const MODULE_LABELS: Array<{
@@ -60,7 +62,7 @@ const MODULE_LABELS: Array<{
 
 export const SettingsModal: React.FC<Props> = ({
   isOpen, onClose, settings, onSave, onImportPatientsJson, userEmail, loginTime, onToast,
-  effectiveFeatures, practiceName,
+  effectiveFeatures, practiceName, portalView = 'clinician', onSwitchPortalView,
 }) => {
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState<UserSettings>(normalizeUserSettings(settings || DEFAULT_SETTINGS));
@@ -79,11 +81,39 @@ export const SettingsModal: React.FC<Props> = ({
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const [importingPatients, setImportingPatients] = useState(false);
   const [lastImportSummary, setLastImportSummary] = useState<PatientImportResponse | null>(null);
+  const [practiceUsers, setPracticeUsers] = useState<PracticeUser[]>([]);
+  const [loadingPracticeUsers, setLoadingPracticeUsers] = useState(false);
+  const [addingPracticeUser, setAddingPracticeUser] = useState(false);
+  const [removingPracticeUserEmail, setRemovingPracticeUserEmail] = useState<string | null>(null);
+  const [newPracticeUserEmail, setNewPracticeUserEmail] = useState('');
 
   useEffect(() => {
     setForm(normalizeUserSettings(settings || DEFAULT_SETTINGS));
     setTemplateTab(normalizeUserSettings(settings || DEFAULT_SETTINGS).noteTemplate);
   }, [settings]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let mounted = true;
+    setLoadingPracticeUsers(true);
+    fetchPracticeUsers()
+      .then((res) => {
+        if (!mounted) return;
+        setPracticeUsers(res.users || []);
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        const message =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as Error).message)
+            : 'Failed to load practice users.';
+        onToast?.(message, 'error');
+      })
+      .finally(() => {
+        if (mounted) setLoadingPracticeUsers(false);
+      });
+    return () => { mounted = false; };
+  }, [isOpen, onToast]);
 
   // Session timer
   useEffect(() => {
@@ -221,6 +251,46 @@ export const SettingsModal: React.FC<Props> = ({
       onToast?.(message, 'error');
     } finally {
       setImportingPatients(false);
+    }
+  };
+
+  const handleAddPracticeUser = async () => {
+    const email = newPracticeUserEmail.trim().toLowerCase();
+    if (!email) {
+      onToast?.('Please enter an email address.', 'info');
+      return;
+    }
+    setAddingPracticeUser(true);
+    try {
+      const res = await addPracticeUser(email);
+      setPracticeUsers(res.users || []);
+      setNewPracticeUserEmail('');
+      onToast?.('Practice user added.', 'success');
+    } catch (err) {
+      const message =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as Error).message)
+          : 'Failed to add practice user.';
+      onToast?.(message, 'error');
+    } finally {
+      setAddingPracticeUser(false);
+    }
+  };
+
+  const handleRemovePracticeUser = async (email: string) => {
+    setRemovingPracticeUserEmail(email);
+    try {
+      const res = await removePracticeUser(email);
+      setPracticeUsers(res.users || []);
+      onToast?.('Practice user removed.', 'success');
+    } catch (err) {
+      const message =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as Error).message)
+          : 'Failed to remove practice user.';
+      onToast?.(message, 'error');
+    } finally {
+      setRemovingPracticeUserEmail(null);
     }
   };
 
@@ -655,6 +725,105 @@ export const SettingsModal: React.FC<Props> = ({
                 <span className="font-semibold text-slate-800">{lastImportSummary.failedCount}</span>
               </div>
             ) : null}
+          </div>
+
+          <div className="border-t border-slate-100 pt-6">
+            <h3 className="mb-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+              <Users size={12} /> Practice users
+            </h3>
+            <p className="mb-3 text-xs text-slate-500">
+              Manage clinician access for your current practice directly from the clinician settings page.
+            </p>
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={newPracticeUserEmail}
+                  onChange={(e) => setNewPracticeUserEmail(e.target.value)}
+                  placeholder="doctor@practice.com"
+                  className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddPracticeUser}
+                  disabled={addingPracticeUser}
+                  className="px-3 py-2.5 rounded-lg bg-sky-600 text-white text-sm font-semibold hover:bg-sky-700 transition disabled:opacity-50"
+                >
+                  {addingPracticeUser ? 'Adding…' : 'Add'}
+                </button>
+              </div>
+
+              <div className="mt-3">
+                {loadingPracticeUsers ? (
+                  <p className="text-xs text-slate-500">Loading practice users…</p>
+                ) : practiceUsers.length === 0 ? (
+                  <p className="text-xs text-slate-500">No practice users found for this practice.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {practiceUsers.map((practiceUser) => {
+                      const isSelf = userEmail?.toLowerCase() === practiceUser.email.toLowerCase();
+                      const removing = removingPracticeUserEmail === practiceUser.email;
+                      return (
+                        <div
+                          key={practiceUser.email}
+                          className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-800 truncate">{practiceUser.email}</p>
+                            <p className="text-[11px] text-slate-500">
+                              {isSelf ? 'You' : 'Practice member'}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePracticeUser(practiceUser.email)}
+                            disabled={isSelf || removing}
+                            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            title={isSelf ? 'You cannot remove yourself' : 'Remove user'}
+                          >
+                            <Trash2 size={12} />
+                            {removing ? 'Removing…' : 'Remove'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-100 pt-6">
+            <h3 className="mb-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+              <LayoutPanelTop size={12} /> Portal mode
+            </h3>
+            <p className="mb-3 text-xs text-slate-500">
+              Switch between clinician workflow and admin portal workspace.
+            </p>
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => onSwitchPortalView?.('clinician')}
+                className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                  portalView === 'clinician'
+                    ? 'bg-white text-slate-800 border border-slate-200'
+                    : 'text-slate-500 hover:bg-white/80'
+                }`}
+              >
+                Clinician
+              </button>
+              <button
+                type="button"
+                onClick={() => onSwitchPortalView?.('admin')}
+                className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                  portalView === 'admin'
+                    ? 'bg-white text-slate-800 border border-slate-200'
+                    : 'text-slate-500 hover:bg-white/80'
+                }`}
+              >
+                Admin Portal
+              </button>
+            </div>
           </div>
 
           <div className="border-t border-slate-100 pt-6">
