@@ -174,22 +174,6 @@ async function ensurePracticeMembershipByEmail(
     .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
     .eq('email', normalizedEmail)
     .maybeSingle();
-  if (existing.error && isMissingSchemaError(existing.error)) {
-    // Backward compatibility while migrations are still rolling out.
-    const legacy = await supabase
-      .from('practice_users')
-      .select('practice_id, role, practices ( id, name, slug )')
-      .eq('email', normalizedEmail)
-      .maybeSingle();
-    if (!legacy.error && (legacy.data as { practice_id?: string } | null)?.practice_id) {
-      return {
-        ...(legacy.data as Record<string, unknown>),
-        specialty_id: null,
-        subspecialty_id: null,
-        onboarding_completed_at: null,
-      } as MembershipRow;
-    }
-  }
   if (existing.error) {
     console.error('[practiceEntitlements] practice_users lookup failed:', existing.error.message);
     throw new Error('Failed to load practice entitlements.');
@@ -245,21 +229,6 @@ async function ensurePracticeMembershipByEmail(
     .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
     .eq('email', normalizedEmail)
     .maybeSingle();
-  if (provisioned.error && isMissingSchemaError(provisioned.error)) {
-    const legacy = await supabase
-      .from('practice_users')
-      .select('practice_id, role, practices ( id, name, slug )')
-      .eq('email', normalizedEmail)
-      .maybeSingle();
-    if (!legacy.error && (legacy.data as { practice_id?: string } | null)?.practice_id) {
-      return {
-        ...(legacy.data as Record<string, unknown>),
-        specialty_id: null,
-        subspecialty_id: null,
-        onboarding_completed_at: null,
-      } as MembershipRow;
-    }
-  }
   if (provisioned.error || !provisioned.data?.practice_id) {
     console.error('[practiceEntitlements] reload auto-provisioned membership failed:', provisioned.error?.message);
     throw new Error('Failed to load auto-provisioned membership.');
