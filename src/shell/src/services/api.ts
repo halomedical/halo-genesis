@@ -1,5 +1,6 @@
 import { normalizeUserSettings } from '../../../../shared/types';
 import type { EffectiveFeatureFlags } from '../../../../shared/featureFlags';
+import type { OnboardingStateResponse } from '../../../../shared/onboarding';
 import type {
   AdmissionsBoard,
   Patient,
@@ -153,7 +154,53 @@ export const getLoginUrl = () => request<{ url: string }>('/api/auth/login-url')
 export const checkAuth = () => request<{ signedIn: boolean; email?: string }>('/api/auth/me');
 export const logout = () => request('/api/auth/logout', { method: 'POST' });
 export const fetchEffectiveFeatures = () =>
-  request<{ effective: EffectiveFeatureFlags }>('/api/drive/features');
+  request<{
+    effective: EffectiveFeatureFlags;
+    practice: { id: string; name: string; slug: string } | null;
+    onboardingRequired: boolean;
+    profile: {
+      role: string;
+      specialtyKey: string;
+      subspecialtyKey: string | null;
+      completedAt: string | null;
+    } | null;
+    selectedModules: {
+      admissions: boolean;
+      adminAgent: boolean;
+      scribe: boolean;
+      billing: boolean;
+    };
+    autoModules: {
+      admissions: boolean;
+      adminAgent: boolean;
+      scribe: boolean;
+      billing: boolean;
+    };
+    source: 'database' | 'default';
+  }>('/api/drive/features');
+
+export const fetchOnboardingState = () =>
+  request<OnboardingStateResponse>('/api/drive/onboarding/state');
+
+export const completeOnboarding = (payload: {
+  role: string;
+  specialtyKey: string;
+  subspecialtyKey?: string | null;
+  selectedModules: {
+    admissions: boolean;
+    adminAgent: boolean;
+    scribe: boolean;
+    billing: boolean;
+  };
+}) =>
+  request<{
+    success: boolean;
+    effective: EffectiveFeatureFlags;
+    onboardingRequired: boolean;
+  }>('/api/drive/onboarding/complete', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 
 /** Admin-only: set module access for a user (server-controlled). */
 export const setUserFeatureGrants = (

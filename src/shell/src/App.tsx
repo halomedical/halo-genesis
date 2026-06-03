@@ -4,18 +4,28 @@ import { PatientWorkspace, type WorkspaceNavigationIntent } from './pages/Patien
 import { Toast } from './components/Toast';
 import { SettingsModal } from './components/SettingsModal';
 import { UploadHud } from './components/UploadHud';
+<<<<<<< HEAD
 import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson, updatePatientFamily } from './services/api';
+=======
+import {
+  checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient,
+  loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson,
+  updatePatientFamily, fetchOnboardingState, completeOnboarding,
+} from './services/api';
+>>>>>>> origin/staging
 import { AdminAgentPanel } from './modules/admin-agent/components/AdminAgentPanel';
 import { AdminAgentOnboarding } from './modules/admin-agent/components/AdminAgentOnboarding';
 import { BillingPage } from './modules/billing/BillingPage';
 import type { Patient, UserSettings, CalendarEvent } from '../../../shared/types';
 import type { EffectiveFeatureFlags } from '../../../shared/featureFlags';
+import type { OnboardingStateResponse } from '../../../shared/onboarding';
 import type { StickerExtractedData } from './services/api';
 import type { UploadHudState } from './components/UploadHud';
 import { LogIn, Loader, X, UserPlus, Calendar, Users, AlertTriangle, Trash2, ScanLine, Loader2 } from 'lucide-react';
 import { CalendarPage } from './pages/CalendarPage';
 import { AdmissionsPage } from './pages/AdmissionsPage';
 import { MarketplacePage } from './pages/MarketplacePage';
+import { OnboardingModal } from './components/OnboardingModal';
 
 export const App = () => {
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -56,6 +66,7 @@ export const App = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [effectiveFeatures, setEffectiveFeatures] = useState<EffectiveFeatureFlags | null>(null);
+  const [practiceInfo, setPracticeInfo] = useState<{ id: string; name: string; slug: string } | null>(null);
   const [userEmail, setUserEmail] = useState<string | undefined>();
   const [loginTime] = useState<number>(Date.now());
 
@@ -82,6 +93,10 @@ export const App = () => {
   const [workspaceIntent, setWorkspaceIntent] = useState<WorkspaceNavigationIntent | null>(null);
   const [adminAgentOpen, setAdminAgentOpen] = useState(false);
   const [showAgentOnboarding, setShowAgentOnboarding] = useState(false);
+  const [onboardingRequired, setOnboardingRequired] = useState(false);
+  const [onboardingState, setOnboardingState] = useState<OnboardingStateResponse | null>(null);
+  const [onboardingSubmitting, setOnboardingSubmitting] = useState(false);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -100,20 +115,18 @@ export const App = () => {
   }, [uploadHudState]);
 
   useEffect(() => {
-    const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
-    if (!admissionsEnabled && activeMainView === 'admissions') {
+    if (!effectiveFeatures?.admissions && activeMainView === 'admissions') {
       setActiveMainView('workspace');
     }
-  }, [activeMainView, effectiveFeatures?.admissions, userSettings?.modules?.admissions]);
+  }, [activeMainView, effectiveFeatures?.admissions]);
 
   useEffect(() => {
-    const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
-    if (!billingEnabled && activeMainView === 'billing') {
+    if (!effectiveFeatures?.billing && activeMainView === 'billing') {
       setActiveMainView('workspace');
     }
-  }, [activeMainView, effectiveFeatures?.billing, userSettings?.modules?.billing]);
+  }, [activeMainView, effectiveFeatures?.billing]);
 
-  const adminAgentEnabled = effectiveFeatures?.adminAgent ?? (userSettings?.modules?.adminAgent ?? false);
+  const adminAgentEnabled = effectiveFeatures?.adminAgent ?? false;
 
   useEffect(() => {
     if (!adminAgentEnabled) {
@@ -205,7 +218,17 @@ export const App = () => {
 
           fetchEffectiveFeatures().then((res) => {
             setEffectiveFeatures(res.effective);
+            setPracticeInfo(res.practice);
+            setOnboardingRequired(Boolean(res.onboardingRequired));
           }).catch(() => {});
+
+          fetchOnboardingState().then((state) => {
+            setOnboardingState(state);
+            setOnboardingRequired(Boolean(state.required));
+          }).catch((error) => {
+            console.error('Load onboarding state error:', error);
+            showToast('Onboarding setup could not be loaded. Check specialties in Supabase.', 'error');
+          });
 
         }
       } catch (error) {
@@ -214,7 +237,7 @@ export const App = () => {
       setIsReady(true);
     };
     checkSession();
-  }, []);
+  }, [refreshPatients, selectPatient, showToast]);
 
   const handleSignIn = async () => {
     setLoading(true);
@@ -239,6 +262,49 @@ export const App = () => {
     setIsSignedIn(false);
     selectPatient(null);
     setActiveMainView('workspace');
+    setOnboardingRequired(false);
+    setOnboardingState(null);
+    setOnboardingDismissed(false);
+  };
+
+  const handleCompleteOnboarding = async (payload: {
+    role: string;
+    specialtyKey: string;
+    subspecialtyKey: string | null;
+    selectedModules: { admissions: boolean; adminAgent: boolean; scribe: boolean; billing: boolean };
+  }) => {
+    setOnboardingSubmitting(true);
+    try {
+      const completion = await completeOnboarding(payload);
+
+      // Close immediately once backend confirms save; refreshes below are best-effort.
+      setOnboardingRequired(Boolean(completion.onboardingRequired));
+      setOnboardingDismissed(true);
+
+      const [featuresRes, onboardingRes] = await Promise.allSettled([
+        fetchEffectiveFeatures(),
+        fetchOnboardingState(),
+      ]);
+
+      if (featuresRes.status === 'fulfilled') {
+        setEffectiveFeatures(featuresRes.value.effective);
+        setPracticeInfo(featuresRes.value.practice);
+        setOnboardingRequired(Boolean(featuresRes.value.onboardingRequired));
+        if (!featuresRes.value.practice) {
+          showToast('Onboarding saved. Ask ops to map your email to a practice for full feature access.', 'info');
+        }
+      }
+      if (onboardingRes.status === 'fulfilled') {
+        setOnboardingState(onboardingRes.value);
+        setOnboardingRequired(Boolean(onboardingRes.value.required));
+      }
+      showToast('Onboarding complete.', 'success');
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+      throw error;
+    } finally {
+      setOnboardingSubmitting(false);
+    }
   };
 
   const resetCreateForm = () => {
@@ -335,15 +401,9 @@ export const App = () => {
   };
 
   const handleSaveSettings = async (settings: UserSettings) => {
-    await saveSettings(settings);
-    setUserSettings(settings);
-    setEffectiveFeatures((prev) => ({
-      ...(prev || {}),
-      admissions: settings.modules?.admissions ?? false,
-      adminAgent: settings.modules?.adminAgent ?? false,
-      scribe: settings.modules?.scribe ?? true,
-      billing: settings.modules?.billing ?? false,
-    }));
+    const { modules: _modules, ...profileOnly } = settings;
+    await saveSettings(profileOnly);
+    setUserSettings(profileOnly);
     showToast('Settings saved.', 'success');
   };
 
@@ -422,8 +482,14 @@ export const App = () => {
   }
 
   const activePatient = patients.find(p => p.id === selectedPatientId);
+<<<<<<< HEAD
   const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
   const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
+=======
+  const admissionsEnabled = effectiveFeatures?.admissions ?? false;
+  const billingEnabled = effectiveFeatures?.billing ?? false;
+  const scribeEnabled = effectiveFeatures?.scribe ?? false;
+>>>>>>> origin/staging
   const hideSidebarOnMobile = activeMainView === 'workspace' && Boolean(selectedPatientId);
 
   return (
@@ -560,12 +626,16 @@ export const App = () => {
         <AdminAgentOnboarding
           userEmail={userEmail}
           onComplete={() => {
+            localStorage.setItem('halo_agent_onboarding_done', '1');
             setShowAgentOnboarding(false);
+<<<<<<< HEAD
             const updated: Parameters<typeof handleSaveSettings>[0] = {
               ...(userSettings || {}),
               modules: { ...(userSettings?.modules || {}), adminAgent: true },
             } as Parameters<typeof handleSaveSettings>[0];
             handleSaveSettings(updated).catch(() => {});
+=======
+>>>>>>> origin/staging
             setAdminAgentOpen(true);
             setActiveMainView('workspace');
           }}
@@ -593,6 +663,8 @@ export const App = () => {
         userEmail={userEmail}
         loginTime={loginTime}
         onToast={showToast}
+        effectiveFeatures={effectiveFeatures}
+        practiceName={practiceInfo?.name ?? null}
       />
 
       {/* CREATE PATIENT MODAL */}
@@ -899,6 +971,13 @@ export const App = () => {
           </div>
         </div>
       )}
+
+      <OnboardingModal
+        isOpen={isSignedIn && onboardingRequired && !onboardingDismissed}
+        state={onboardingState}
+        submitting={onboardingSubmitting}
+        onSubmit={handleCompleteOnboarding}
+      />
     </div>
   );
 };

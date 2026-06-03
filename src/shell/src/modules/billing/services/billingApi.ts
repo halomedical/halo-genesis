@@ -15,7 +15,15 @@ export class BillingApiError extends Error {
   }
 }
 
+<<<<<<< HEAD
 function extractMessageFromBody(body: Record<string, unknown>): string | null {
+=======
+function normalizeBillingErrorMessage(data: unknown, status: number): string {
+  if (typeof data === 'string' && data.trim()) return data.trim();
+  if (!data || typeof data !== 'object') return `Billing API request failed (${status})`;
+
+  const body = data as Record<string, unknown>;
+>>>>>>> origin/staging
   const messageField = body.message;
   if (typeof messageField === 'string' && messageField.trim()) {
     return messageField.trim();
@@ -24,12 +32,19 @@ function extractMessageFromBody(body: Record<string, unknown>): string | null {
     const parts = messageField
       .map((value) => (typeof value === 'string' ? value.trim() : ''))
       .filter(Boolean);
+<<<<<<< HEAD
     if (parts.length > 0) return parts.join('; ');
   }
+=======
+    if (parts.length > 0) return parts.join(' | ');
+  }
+
+>>>>>>> origin/staging
   const errorField = body.error;
   if (typeof errorField === 'string' && errorField.trim()) {
     return errorField.trim();
   }
+<<<<<<< HEAD
   return null;
 }
 
@@ -119,6 +134,10 @@ export function formatBillingError(error: unknown, context?: string): string {
 
   if (error instanceof Error) return `${prefix}${error.message}`;
   return `${prefix}Something went wrong. Please try again.`;
+=======
+
+  return `Billing API request failed (${status})`;
+>>>>>>> origin/staging
 }
 
 async function billingRequest<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
@@ -188,8 +207,11 @@ export interface StoredClaimRecord {
   reversed: boolean;
   reversalStatus?: string;
   reversalMessages: string[];
+<<<<<<< HEAD
   /** Present on GET /claims/:id — use to autofill reversal with the same transaction details. */
   requestPayload?: BillingClaimCreatePayload;
+=======
+>>>>>>> origin/staging
   totalClaimedCents?: number;
   totalPaidCents?: number;
   varianceCents?: number;
@@ -227,8 +249,11 @@ export interface BillingClaimLineItemPayload {
   procedureCode: string;
   description?: string;
   quantity: number;
+<<<<<<< HEAD
   baseTariffCents?: number;
   tariffPercent?: number;
+=======
+>>>>>>> origin/staging
   unitPriceCents: number;
   totalPriceCents: number;
   serviceDate: string;
@@ -261,6 +286,7 @@ export interface ClaimResultDto {
   messages: string[];
 }
 
+<<<<<<< HEAD
 export type EligibilityRequestType =
   | 'normal'
   | 'family'
@@ -330,6 +356,10 @@ export function eligibilityRequiresMemberNumber(
 
 export interface BillingEligibilityPayload {
   requestType?: EligibilityRequestType | string;
+=======
+export interface BillingEligibilityPayload {
+  requestType?: 'normal' | 'family' | 'auth' | 'exclusion' | 'auth_and_exclusion' | string;
+>>>>>>> origin/staging
   memberNumber?: string;
   schemeCode?: string;
   planCode?: string;

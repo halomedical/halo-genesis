@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+=======
+import React, { useMemo, useRef, useState } from 'react';
+>>>>>>> origin/staging
 import { RefreshCw } from 'lucide-react';
 import {
   billingGetClaims,
@@ -6,6 +10,7 @@ import {
   billingCheckEligibility,
   billingSubmitClaim,
   billingReverseClaim,
+<<<<<<< HEAD
   formatBillingError,
   ELIGIBILITY_REQUEST_TYPE_OPTIONS,
   eligibilityRequiresMemberNumber,
@@ -13,6 +18,10 @@ import {
   type BillingClaimCreatePayload,
   type BillingEligibilityPayload,
   type EligibilityRequestType,
+=======
+  type BillingClaimCreatePayload,
+  type BillingEligibilityPayload,
+>>>>>>> origin/staging
   type EligibilityResponseDto,
   type StoredClaimRecord,
 } from './services/billingApi';
@@ -29,7 +38,11 @@ import {
 
 type ToastFn = (message: string, type?: 'success' | 'error' | 'info') => void;
 
+<<<<<<< HEAD
 type ClaimsSubTab = 'list' | 'submit' | 'reverse' | 'financials';
+=======
+type ClaimsSubTab = 'list' | 'submit' | 'reverse';
+>>>>>>> origin/staging
 
 const LS_LAST_SUBMIT = 'halo_billing_last_submit_payload_v1';
 const LS_LAST_ELIGIBILITY = 'halo_billing_last_eligibility_payload_v1';
@@ -58,6 +71,7 @@ function writeJson(key: string, value: unknown) {
   }
 }
 
+<<<<<<< HEAD
 function BillingErrorAlert({
   title,
   message,
@@ -91,6 +105,8 @@ function BillingErrorAlert({
   );
 }
 
+=======
+>>>>>>> origin/staging
 function getEmptyClaimPayload(): BillingClaimCreatePayload {
   return {
     externalReference: '',
@@ -118,8 +134,11 @@ function getEmptyClaimPayload(): BillingClaimCreatePayload {
         procedureCode: '',
         description: '',
         quantity: 1,
+<<<<<<< HEAD
         baseTariffCents: 0,
         tariffPercent: 100,
+=======
+>>>>>>> origin/staging
         unitPriceCents: 0,
         totalPriceCents: 0,
         serviceDate: getTodayIsoDate(),
@@ -271,6 +290,7 @@ function formatMoneyOrDash(cents?: number | null): string {
   return formatCents(cents);
 }
 
+<<<<<<< HEAD
 function clampTariffPercent(value: number): number {
   if (!Number.isFinite(value)) return 100;
   if (value < 1) return 1;
@@ -666,6 +686,8 @@ function PracticeClaimFinancialsList({ claims }: { claims: StoredClaimRecord[] }
   );
 }
 
+=======
+>>>>>>> origin/staging
 function renderLineItemsSummary(claim: StoredClaimRecord) {
   const items = claim.lineItemsSummary || [];
   if (!items.length) return null;
@@ -759,6 +781,7 @@ function compactClaimPayload(payload: BillingClaimCreatePayload): BillingClaimCr
     lineItems: payload.lineItems.map((li) => ({
       ...li,
       description: trimOrUndefined(li.description),
+<<<<<<< HEAD
       baseTariffCents:
         typeof li.baseTariffCents === 'number' && li.baseTariffCents > 0
           ? Math.round(li.baseTariffCents)
@@ -767,6 +790,8 @@ function compactClaimPayload(payload: BillingClaimCreatePayload): BillingClaimCr
         typeof li.tariffPercent === 'number' && li.tariffPercent > 0
           ? clampTariffPercent(li.tariffPercent)
           : undefined,
+=======
+>>>>>>> origin/staging
     })),
     other: hasOther ? compactOther : undefined,
   };
@@ -779,7 +804,11 @@ function compactEligibilityPayload(p: BillingEligibilityPayload): BillingEligibi
   };
 
   return {
+<<<<<<< HEAD
     requestType: normalizeEligibilityRequestType(compact(p.requestType)),
+=======
+    requestType: compact(p.requestType) || 'normal',
+>>>>>>> origin/staging
     memberNumber: compact(p.memberNumber),
     serviceDate: p.serviceDate,
     schemeCode: compact(p.schemeCode)?.toUpperCase(),
@@ -826,15 +855,19 @@ function ClaimsTab({
   });
 
   const [reversalTx, setReversalTx] = useState('');
+<<<<<<< HEAD
   const [reversalLoading, setReversalLoading] = useState(false);
   const [reversalError, setReversalError] = useState<string | null>(null);
   const [selectedReversalClaim, setSelectedReversalClaim] = useState<StoredClaimRecord | null>(null);
+=======
+>>>>>>> origin/staging
   const [reversalPayload, setReversalPayload] = useState<BillingClaimCreatePayload>(() => {
     const saved = readJson<BillingClaimCreatePayload>(LS_LAST_SUBMIT);
     return saved ?? getEmptyClaimPayload();
   });
   const [claimEligibilityResult, setClaimEligibilityResult] = useState<EligibilityResponseDto | null>(null);
   const [claimEligibilityLoading, setClaimEligibilityLoading] = useState(false);
+<<<<<<< HEAD
   const [eligibilityRequestType, setEligibilityRequestType] = useState<EligibilityRequestType>(() => {
     const saved = readJson<BillingEligibilityPayload>(LS_LAST_ELIGIBILITY);
     return normalizeEligibilityRequestType(saved?.requestType);
@@ -843,6 +876,8 @@ function ClaimsTab({
   const selectedEligibilityOption =
     ELIGIBILITY_REQUEST_TYPE_OPTIONS.find((opt) => opt.value === eligibilityRequestType) ??
     ELIGIBILITY_REQUEST_TYPE_OPTIONS[0];
+=======
+>>>>>>> origin/staging
 
   const applyPatientToClaim = (base: BillingClaimCreatePayload): BillingClaimCreatePayload => {
     if (!patient) return base;
@@ -881,7 +916,10 @@ function ClaimsTab({
 
   React.useEffect(() => {
     setClaimEligibilityResult(null);
+<<<<<<< HEAD
     setLastCheckedEligibilityType(null);
+=======
+>>>>>>> origin/staging
   }, [
     submitPayload.patient.memberNumber,
     submitPayload.patient.dependantCode,
@@ -897,7 +935,10 @@ function ClaimsTab({
     submitPayload.lineItems.map((li) => li.serviceDate).join('|'),
     patient?.schemeCode,
     userSettings?.billing?.schemeCode,
+<<<<<<< HEAD
     eligibilityRequestType,
+=======
+>>>>>>> origin/staging
   ]);
 
   const canSubmit = useMemo(() => {
@@ -972,6 +1013,7 @@ function ClaimsTab({
     [claims, hiddenClaimIds]
   );
 
+<<<<<<< HEAD
   const reversalEligibleClaims = useMemo(
     () => visibleClaims.filter((c) => !c.reversed && !!c.transactionNumber),
     [visibleClaims]
@@ -987,6 +1029,8 @@ function ClaimsTab({
     }
   }, [reversalEligibleClaims, reversalTx]);
 
+=======
+>>>>>>> origin/staging
   const selectAndLoadClaim = async (id: string) => {
     if (expandedClaimId === id) {
       setExpandedClaimId(null);
@@ -1017,6 +1061,7 @@ function ClaimsTab({
         <p><span className="font-semibold text-slate-600">Dependant:</span> {claim.dependantCode || '—'}</p>
         <p><span className="font-semibold text-slate-600">Transaction:</span> {claim.transactionNumber || '—'}</p>
         <p><span className="font-semibold text-slate-600">Status:</span> {claim.reversed ? 'reversed' : claim.status}</p>
+<<<<<<< HEAD
         {claim.reversed && claim.reversalStatus ? (
           <p><span className="font-semibold text-slate-600">Reversal:</span> {claim.reversalStatus}</p>
         ) : null}
@@ -1043,6 +1088,12 @@ function ClaimsTab({
         ) : null}
       </div>
       <ClaimFinancialsPanel claim={claim} />
+=======
+        <p><span className="font-semibold text-slate-600">Created:</span> {new Date(claim.createdAt).toLocaleString()}</p>
+        <p><span className="font-semibold text-slate-600">Claimed:</span> {formatMoneyOrDash(claim.totalClaimedCents)}</p>
+        <p><span className="font-semibold text-slate-600">Paid:</span> {formatMoneyOrDash(claim.totalPaidCents)}</p>
+      </div>
+>>>>>>> origin/staging
       {claim.messages?.length ? (
         <div className="mt-3">
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Response messages</p>
@@ -1053,6 +1104,7 @@ function ClaimsTab({
           </ul>
         </div>
       ) : null}
+<<<<<<< HEAD
       {claim.reversed && claim.reversalMessages?.length ? (
         <div className="mt-3">
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Reversal messages</p>
@@ -1063,6 +1115,8 @@ function ClaimsTab({
           </ul>
         </div>
       ) : null}
+=======
+>>>>>>> origin/staging
       {renderLineItemsSummary(claim)}
     </div>
   );
@@ -1191,10 +1245,14 @@ function ClaimsTab({
     onToast('Claim removed from this list view.', 'info');
   };
 
+<<<<<<< HEAD
   const buildEligibilityFromClaim = (
     claimPayload: BillingClaimCreatePayload,
     requestType: EligibilityRequestType = eligibilityRequestType,
   ): BillingEligibilityPayload => {
+=======
+  const buildEligibilityFromClaim = (claimPayload: BillingClaimCreatePayload): BillingEligibilityPayload => {
+>>>>>>> origin/staging
     const name = splitName(`${claimPayload.patient.firstName} ${claimPayload.patient.lastName}`.trim() || patient?.name || '');
     const firstServiceDate = claimPayload.lineItems.find((li) => li.serviceDate)?.serviceDate || getTodayIsoDate();
     const resolvedPlanCode =
@@ -1218,7 +1276,11 @@ function ClaimsTab({
       '';
 
     return {
+<<<<<<< HEAD
       requestType,
+=======
+      requestType: 'normal',
+>>>>>>> origin/staging
       memberNumber: resolvedMemberNumber,
       dependantCode: claimPayload.patient.dependantCode || patient?.dependantCode || '',
       patientDateOfBirth: claimPayload.patient.dateOfBirth || '',
@@ -1236,6 +1298,7 @@ function ClaimsTab({
   };
 
   const checkEligibilityForClaim = async () => {
+<<<<<<< HEAD
     const requestPayload = compactEligibilityPayload(
       buildEligibilityFromClaim(submitPayload, eligibilityRequestType),
     );
@@ -1257,6 +1320,12 @@ function ClaimsTab({
     }
     if (!memberRequired && !hasMemberOrId) {
       onToast('Eligibility needs either a member number or patient ID number.', 'error');
+=======
+    const requestPayload = compactEligibilityPayload(buildEligibilityFromClaim(submitPayload));
+    const hasMemberOrId = !!(requestPayload.memberNumber ?? '').trim() || !!requestPayload.patientIdNumber?.trim();
+    if (!requestPayload.serviceDate || !requestPayload.schemeCode?.trim() || !requestPayload.planCode?.trim() || !hasMemberOrId) {
+      onToast('Eligibility needs service date, scheme code, plan code, and either member number or patient ID number.', 'error');
+>>>>>>> origin/staging
       return;
     }
     setClaimEligibilityLoading(true);
@@ -1264,7 +1333,10 @@ function ClaimsTab({
     try {
       const res = await billingCheckEligibility(requestPayload);
       setClaimEligibilityResult(res);
+<<<<<<< HEAD
       setLastCheckedEligibilityType(requestPayload.requestType as EligibilityRequestType);
+=======
+>>>>>>> origin/staging
       onToast(`Eligibility: ${res.status}.`, res.status === 'eligible' ? 'success' : 'info');
       writeJson(LS_LAST_ELIGIBILITY, requestPayload);
       if (patient?.id) {
@@ -1318,6 +1390,7 @@ function ClaimsTab({
     }
   };
 
+<<<<<<< HEAD
   const loadReversalPayloadForTx = async (tx: string) => {
     const trimmed = tx.trim();
     if (!trimmed) {
@@ -1389,6 +1462,20 @@ function ClaimsTab({
       onToast(msg, 'error');
     } finally {
       setReversalLoading(false);
+=======
+  const reverseClaim = async () => {
+    if (!reversalTx.trim()) {
+      onToast('Transaction number is required for reversal.', 'error');
+      return;
+    }
+    try {
+      const payloadToSubmit = compactClaimPayload(reversalPayload);
+      const result = await billingReverseClaim({ ...payloadToSubmit, transactionNumber: reversalTx.trim() });
+      onToast(`Reversal ${result.status}.`, result.status === 'accepted' ? 'success' : 'info');
+      await refreshClaims();
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : 'Failed to reverse claim.', 'error');
+>>>>>>> origin/staging
     }
   };
 
@@ -1400,7 +1487,11 @@ function ClaimsTab({
         right={
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
+<<<<<<< HEAD
               {(['list', 'submit', 'reverse', 'financials'] as ClaimsSubTab[]).map((name) => (
+=======
+              {(['list', 'submit', 'reverse'] as ClaimsSubTab[]).map((name) => (
+>>>>>>> origin/staging
                 <button
                   key={name}
                   type="button"
@@ -1454,7 +1545,10 @@ function ClaimsTab({
                           <p className="mt-1 truncate text-xs text-slate-500">
                             Member: {c.memberNumber} • Tx: {c.transactionNumber || '—'} • Items:{' '}
                             {c.totalLineItems ?? c.lineItemsSummary?.length ?? '—'}
+<<<<<<< HEAD
                             {c.reversalStatus ? ` • Reversal: ${c.reversalStatus}` : ''}
+=======
+>>>>>>> origin/staging
                           </p>
                         </button>
                         <div className="flex items-center gap-2">
@@ -1484,6 +1578,7 @@ function ClaimsTab({
           </div>
         )}
 
+<<<<<<< HEAD
         {subTab === 'financials' && (
           <div className="space-y-3">
             {claimsLoading && !claims ? (
@@ -1497,6 +1592,8 @@ function ClaimsTab({
           </div>
         )}
 
+=======
+>>>>>>> origin/staging
         {subTab === 'list' && patient?.id && (
           <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
             <div className="flex items-center justify-between gap-2">
@@ -1529,6 +1626,7 @@ function ClaimsTab({
           <div className="mt-1">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Submit new claim</p>
             <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+<<<<<<< HEAD
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Eligibility check</p>
@@ -1561,6 +1659,14 @@ function ClaimsTab({
                         : ' Member number or patient ID number can be used for this check type.'}
                     </p>
                   </div>
+=======
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Eligibility check</p>
+                  <p className="text-sm text-slate-600">
+                    Check member eligibility for the current claim details before submission.
+                  </p>
+>>>>>>> origin/staging
                 </div>
                 <SmallButton onClick={checkEligibilityForClaim} disabled={claimEligibilityLoading}>
                   {claimEligibilityLoading ? <RefreshCw size={16} className="animate-spin" /> : null}
@@ -1578,6 +1684,7 @@ function ClaimsTab({
                           : 'border-amber-200 bg-amber-50 text-amber-800'
                     }`}
                   >
+<<<<<<< HEAD
                     <p className="font-semibold">
                       Status: {claimEligibilityResult.status}
                       {lastCheckedEligibilityType ? (
@@ -1590,6 +1697,9 @@ function ClaimsTab({
                         </span>
                       ) : null}
                     </p>
+=======
+                    <p className="font-semibold">Status: {claimEligibilityResult.status}</p>
+>>>>>>> origin/staging
                     {claimEligibilityResult.messages?.length ? (
                       <ul className="mt-1 list-disc pl-5">
                         {claimEligibilityResult.messages.map((msg, idx) => (
@@ -1653,6 +1763,7 @@ function ClaimsTab({
 
         {subTab === 'reverse' && (
           <div className="mt-1 space-y-4">
+<<<<<<< HEAD
             {reversalError ? (
               <BillingErrorAlert
                 title="Reversal failed"
@@ -1666,10 +1777,15 @@ function ClaimsTab({
             </p>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
+=======
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="md:col-span-2">
+>>>>>>> origin/staging
                 <Label>Select claim to reverse</Label>
                 <select
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-100"
                   value={reversalTx}
+<<<<<<< HEAD
                   onChange={e => {
                     const tx = e.target.value;
                     setReversalTx(tx);
@@ -1714,6 +1830,32 @@ function ClaimsTab({
             ) : (
               <p className="text-sm text-slate-500">No claim selected yet.</p>
             )}
+=======
+                  onChange={e => setReversalTx(e.target.value)}
+                >
+                  <option value="">Select a claim…</option>
+                  {visibleClaims.map(c =>
+                    c.transactionNumber ? (
+                      <option key={c.id} value={c.transactionNumber}>
+                        {c.transactionNumber} — {c.patientLastName || ''} ({c.memberNumber})
+                      </option>
+                    ) : null
+                  )}
+                </select>
+              </div>
+              <div>
+                <Label>Transaction number</Label>
+                <Input value={reversalTx} onChange={e => setReversalTx(e.target.value)} placeholder="e.g. TX123456789" />
+              </div>
+            </div>
+            <ClaimForm
+              payload={reversalPayload}
+              onChange={setReversalPayload}
+              actionLabel="Reverse claim"
+              onAction={reverseClaim}
+              actionVariant="danger"
+            />
+>>>>>>> origin/staging
           </div>
         )}
       </Section>
@@ -1785,8 +1927,11 @@ function ClaimForm({
           procedureCode: '',
           description: '',
           quantity: 1,
+<<<<<<< HEAD
           baseTariffCents: 0,
           tariffPercent: 100,
+=======
+>>>>>>> origin/staging
           unitPriceCents: 0,
           totalPriceCents: 0,
           serviceDate: getTodayIsoDate(),
@@ -1804,8 +1949,11 @@ function ClaimForm({
               procedureCode: '',
               description: '',
               quantity: 1,
+<<<<<<< HEAD
               baseTariffCents: 0,
               tariffPercent: 100,
+=======
+>>>>>>> origin/staging
               unitPriceCents: 0,
               totalPriceCents: 0,
               serviceDate: getTodayIsoDate(),
@@ -1814,6 +1962,7 @@ function ClaimForm({
     });
   };
 
+<<<<<<< HEAD
   const totalClaimedCents = payload.lineItems.reduce(
     (sum, li) => sum + (Number(li.totalPriceCents) || 0),
     0,
@@ -1822,6 +1971,8 @@ function ClaimForm({
   const averageLineCents =
     totalLineItems > 0 ? Math.round(totalClaimedCents / totalLineItems) : 0;
 
+=======
+>>>>>>> origin/staging
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1946,6 +2097,7 @@ function ClaimForm({
                         (opt) => opt.procedureCode === procedureCode && (opt.description || '') === (description || '')
                       );
                       if (!option) return;
+<<<<<<< HEAD
                       updateLineItem(idx, recalcLineItemFromTariff({
                         procedureCode: option.procedureCode,
                         description: option.description,
@@ -1956,6 +2108,15 @@ function ClaimForm({
                         totalPriceCents: option.totalPriceCents,
                         serviceDate: li.serviceDate,
                       }));
+=======
+                      updateLineItem(idx, {
+                        procedureCode: option.procedureCode,
+                        description: option.description,
+                        quantity: option.quantity,
+                        unitPriceCents: option.unitPriceCents,
+                        totalPriceCents: option.totalPriceCents,
+                      });
+>>>>>>> origin/staging
                     }}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                   >
@@ -1981,6 +2142,7 @@ function ClaimForm({
                     type="number"
                     min={0}
                     value={li.quantity}
+<<<<<<< HEAD
                     onChange={e =>
                       updateLineItem(
                         idx,
@@ -2034,6 +2196,9 @@ function ClaimForm({
                     min={0}
                     value={li.unitPriceCents}
                     onChange={e => updateLineItem(idx, { unitPriceCents: Number(e.target.value || 0) })}
+=======
+                    onChange={e => updateLineItem(idx, { quantity: Number(e.target.value || 0) })}
+>>>>>>> origin/staging
                   />
                 </div>
                 <div>
@@ -2057,6 +2222,7 @@ function ClaimForm({
         </div>
       </div>
 
+<<<<<<< HEAD
       <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-3">
         <p className="text-xs font-bold uppercase tracking-wider text-cyan-700">Financial Preview</p>
         <p className="mt-1 text-xs text-cyan-800">
@@ -2069,6 +2235,8 @@ function ClaimForm({
         </div>
       </div>
 
+=======
+>>>>>>> origin/staging
       <div className="flex justify-end">
         <SmallButton onClick={onAction} disabled={actionDisabled} variant={actionVariant}>
           {actionLabel}

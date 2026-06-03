@@ -30,9 +30,20 @@ import {
 } from '../services/admissionsBoard';
 // Scheduler disabled; run-scheduler and scheduler-status kept for optional manual use
 import { runSchedulerNow, getSchedulerStatus } from '../jobs/scheduler';
+<<<<<<< HEAD
 import { normalizeUserSettings } from '../../shared/types';
 import type { AdmissionsBoard, ScribeSession, UserModulesSettings } from '../../shared/types';
 import { getVpsJwt } from '../services/vpsApi';
+=======
+import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../shared/types';
+import {
+  getPracticeEntitlementsForEmail,
+  getOnboardingStateForEmail,
+  submitOnboardingForEmail,
+} from '../services/practiceEntitlements';
+import type { AdmissionsBoard, ScribeSession } from '../../shared/types';
+import { getVpsJwt, getVpsConfig, setVpsConfig } from '../services/vpsApi';
+>>>>>>> origin/staging
 import { requireFeature } from '../middleware/requireFeature';
 import {
   isFeatureAdmin,
@@ -1725,8 +1736,33 @@ router.get('/settings', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
+<<<<<<< HEAD
     const settings = await loadUserSettingsForEmail(vpsJwt, userEmail);
     res.json({ settings });
+=======
+    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
+    const parsed = parseSettingsBlob(raw);
+    const emailKey = normalizeSettingsEmail(userEmail);
+
+    let settings = DEFAULT_USER_SETTINGS;
+    if (parsed) {
+      const byEmail = parsed[USER_SETTINGS_V2_MARKER];
+      if (byEmail && typeof byEmail === 'object') {
+        const emailSettings = (byEmail as Record<string, unknown>)[emailKey];
+        const legacySettings = (byEmail as Record<string, unknown>).__legacy__;
+        settings = normalizeUserSettings(
+          (emailSettings && typeof emailSettings === 'object')
+            ? (emailSettings as Record<string, unknown>)
+            : ((legacySettings && typeof legacySettings === 'object') ? (legacySettings as Record<string, unknown>) : undefined)
+        );
+      } else {
+        // Backward compatibility: legacy payload was a plain UserSettings object.
+        settings = normalizeUserSettings(parsed);
+      }
+    }
+    const { modules: _modules, ...profileOnly } = settings;
+    res.json({ settings: profileOnly });
+>>>>>>> origin/staging
   } catch (err) {
     console.error('Load settings error:', err);
     const message = err instanceof Error ? err.message : 'Failed to load settings.';
@@ -1734,15 +1770,27 @@ router.get('/settings', async (req: Request, res: Response) => {
   }
 });
 
-// GET /features
+// GET /features — module access from Supabase practice_features (not user Settings)
 router.get('/features', async (req: Request, res: Response) => {
   try {
-    const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
+<<<<<<< HEAD
     const vpsJwt = await getVpsJwt(token, userEmail);
     const settings = await loadUserSettingsForEmail(vpsJwt, userEmail);
     const effective = resolveEffectiveFeaturesForUser(userEmail, settings);
     res.json({ effective });
+=======
+    const entitlements = await getPracticeEntitlementsForEmail(userEmail);
+    res.json({
+      effective: entitlements.effective,
+      practice: entitlements.practice,
+      onboardingRequired: entitlements.onboardingRequired,
+      profile: entitlements.profile,
+      selectedModules: entitlements.selectedModules,
+      autoModules: entitlements.autoModules,
+      source: entitlements.source,
+    });
+>>>>>>> origin/staging
   } catch (err) {
     console.error('Load feature flags error:', err);
     const message = err instanceof Error ? err.message : 'Failed to load feature flags.';
@@ -1780,6 +1828,58 @@ router.put('/features/grants', async (req: Request, res: Response) => {
   }
 });
 
+// GET /onboarding/state
+router.get('/onboarding/state', async (req: Request, res: Response) => {
+  try {
+    const userEmail = req.session.userEmail!;
+    const state = await getOnboardingStateForEmail(userEmail);
+    res.json(state);
+  } catch (err) {
+    console.error('Load onboarding state error:', err);
+    res.status(500).json({ error: 'Failed to load onboarding state.' });
+  }
+});
+
+// POST /onboarding/complete
+router.post('/onboarding/complete', async (req: Request, res: Response) => {
+  try {
+    const userEmail = req.session.userEmail!;
+    const role = typeof req.body?.role === 'string' ? req.body.role : '';
+    const specialtyKey = typeof req.body?.specialtyKey === 'string' ? req.body.specialtyKey : '';
+    const subspecialtyKey =
+      typeof req.body?.subspecialtyKey === 'string' ? req.body.subspecialtyKey : null;
+    const selectedModules = req.body?.selectedModules;
+
+    if (!specialtyKey) {
+      res.status(400).json({ error: 'specialtyKey is required.' });
+      return;
+    }
+
+    const entitlements = await submitOnboardingForEmail(userEmail, {
+      role,
+      specialtyKey,
+      subspecialtyKey,
+      selectedModules,
+    });
+
+    res.json({
+      success: true,
+      effective: entitlements.effective,
+      practice: entitlements.practice,
+      onboardingRequired: entitlements.onboardingRequired,
+      profile: entitlements.profile,
+      selectedModules: entitlements.selectedModules,
+      autoModules: entitlements.autoModules,
+      source: entitlements.source,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to complete onboarding.';
+    const status = /invalid|required/i.test(message) ? 400 : 500;
+    console.error('Complete onboarding error:', err);
+    res.status(status).json({ error: message });
+  }
+});
+
 // PUT /settings
 router.put('/settings', async (req: Request, res: Response) => {
   try {
@@ -1791,7 +1891,31 @@ router.put('/settings', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
+<<<<<<< HEAD
     await saveUserSettingsForEmail(vpsJwt, userEmail, settings);
+=======
+    const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
+    const parsed = parseSettingsBlob(raw);
+    const emailKey = normalizeSettingsEmail(userEmail);
+
+    let nextBlob: Record<string, unknown>;
+    if (parsed && parsed[USER_SETTINGS_V2_MARKER] && typeof parsed[USER_SETTINGS_V2_MARKER] === 'object') {
+      nextBlob = parsed;
+    } else {
+      // Migrate legacy blob shape to v2.
+      nextBlob = {
+        [USER_SETTINGS_V2_MARKER]: {},
+      };
+      if (parsed) {
+        (nextBlob[USER_SETTINGS_V2_MARKER] as Record<string, unknown>).__legacy__ = parsed;
+      }
+    }
+
+    const byEmail = nextBlob[USER_SETTINGS_V2_MARKER] as Record<string, unknown>;
+    const { modules: _ignoredModules, ...profileSettings } = settings;
+    byEmail[emailKey] = profileSettings;
+    await setVpsConfig(vpsJwt, USER_SETTINGS_KEY, JSON.stringify(nextBlob));
+>>>>>>> origin/staging
     res.json({ success: true });
   } catch (err) {
     console.error('Save settings error:', err);

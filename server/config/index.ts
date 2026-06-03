@@ -47,11 +47,17 @@ export const config = {
   vpsAdminEmail: process.env.VPS_ADMIN_EMAIL || '',
   vpsAdminPassword: process.env.VPS_ADMIN_PASSWORD || '',
 
+<<<<<<< HEAD
   // Comma-separated emails allowed to set per-user feature grants via API.
   featureAdminEmails: (process.env.FEATURE_ADMIN_EMAILS || process.env.VPS_ADMIN_EMAIL || '')
     .split(',')
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean),
+=======
+  // Practice entitlements (Supabase) — module access is edited in DB, not in app Settings
+  supabaseUrl: process.env.SUPABASE_URL || '',
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+>>>>>>> origin/staging
 
   // Halo Functions API
   haloApiBaseUrl: process.env.HALO_API_BASE_URL || 'https://halo-functions-75316778879.africa-south1.run.app',
