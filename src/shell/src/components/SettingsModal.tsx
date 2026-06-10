@@ -195,11 +195,11 @@ export const SettingsModal: React.FC<Props> = ({
 
   const hasProfile = form.firstName || form.lastName || form.profession || form.department;
   const displayName = [form.firstName, form.lastName].filter(Boolean).join(' ') || 'Not set';
-  const toggleModule = (key: 'admissions' | 'adminAgent' | 'scribe' | 'billing') =>
+  const toggleModule = (key: 'admissions' | 'adminAgent' | 'scribe' | 'billing' | 'pdfFiller') =>
     setForm((prev) => ({
       ...prev,
       modules: {
-        ...(prev.modules || { admissions: false, adminAgent: false, scribe: true, billing: false }),
+        ...(prev.modules || { admissions: false, adminAgent: false, scribe: true, billing: false, pdfFiller: false }),
         [key]: !(prev.modules?.[key] ?? false),
       },
     }));
@@ -740,6 +740,33 @@ export const SettingsModal: React.FC<Props> = ({
                     <span
                       className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
                         form.modules?.billing ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">PDF Filler</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Upload practice PDF templates and complete forms in Halo UI with filled PDFs filed to patient folders.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleModule('pdfFiller')}
+                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition ${
+                      form.modules?.pdfFiller
+                        ? 'border-cyan-500 bg-cyan-500'
+                        : 'border-slate-200 bg-white'
+                    }`}
+                    aria-pressed={form.modules?.pdfFiller ?? false}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                        form.modules?.pdfFiller ? 'translate-x-6' : 'translate-x-1'
                       }`}
                     />
                   </button>

@@ -8,6 +8,7 @@ import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, cre
 import { AdminAgentPanel } from './modules/admin-agent/components/AdminAgentPanel';
 import { AdminAgentOnboarding } from './modules/admin-agent/components/AdminAgentOnboarding';
 import { BillingPage } from './modules/billing/BillingPage';
+import { PdfTemplatesPage } from './modules/pdf-filler/PdfTemplatesPage';
 import type { Patient, UserSettings, CalendarEvent } from '../../../shared/types';
 import type { EffectiveFeatureFlags } from '../../../shared/featureFlags';
 import type { StickerExtractedData } from './services/api';
@@ -73,7 +74,7 @@ export const App = () => {
 
   // Calendar / bookings
   const [calendarPrepEvent, setCalendarPrepEvent] = useState<CalendarEvent | null>(null);
-  const [activeMainView, setActiveMainView] = useState<'workspace' | 'calendar' | 'admissions' | 'marketplace' | 'billing'>('workspace');
+  const [activeMainView, setActiveMainView] = useState<'workspace' | 'calendar' | 'admissions' | 'marketplace' | 'billing' | 'pdf-filler'>('workspace');
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('halo_sidebarCollapsed') === '1';
@@ -112,6 +113,13 @@ export const App = () => {
       setActiveMainView('workspace');
     }
   }, [activeMainView, effectiveFeatures?.billing, userSettings?.modules?.billing]);
+
+  useEffect(() => {
+    const pdfFillerEnabled = effectiveFeatures?.pdfFiller ?? (userSettings?.modules?.pdfFiller ?? false);
+    if (!pdfFillerEnabled && activeMainView === 'pdf-filler') {
+      setActiveMainView('workspace');
+    }
+  }, [activeMainView, effectiveFeatures?.pdfFiller, userSettings?.modules?.pdfFiller]);
 
   const adminAgentEnabled = effectiveFeatures?.adminAgent ?? (userSettings?.modules?.adminAgent ?? false);
 
@@ -339,13 +347,13 @@ export const App = () => {
   const handleSaveSettings = async (settings: UserSettings) => {
     await saveSettings(settings);
     setUserSettings(settings);
-    setEffectiveFeatures((prev) => ({
-      ...(prev || {}),
+    setEffectiveFeatures({
       admissions: settings.modules?.admissions ?? false,
       adminAgent: settings.modules?.adminAgent ?? false,
       scribe: settings.modules?.scribe ?? true,
       billing: settings.modules?.billing ?? false,
-    }));
+      pdfFiller: settings.modules?.pdfFiller ?? false,
+    });
     showToast('Settings saved.', 'success');
   };
 
@@ -426,6 +434,7 @@ export const App = () => {
   const activePatient = patients.find(p => p.id === selectedPatientId);
   const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
   const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
+  const pdfFillerEnabled = effectiveFeatures?.pdfFiller ?? (userSettings?.modules?.pdfFiller ?? false);
   const scribeEnabled = effectiveFeatures?.scribe ?? (userSettings?.modules?.scribe ?? true);
   const hideSidebarOnMobile = activeMainView === 'workspace' && Boolean(selectedPatientId);
 
@@ -458,6 +467,8 @@ export const App = () => {
           onOpenMarketplace={() => setActiveMainView('marketplace')}
           billingEnabled={billingEnabled}
           onOpenBilling={() => billingEnabled && setActiveMainView('billing')}
+          pdfFillerEnabled={pdfFillerEnabled}
+          onOpenPdfFiller={() => pdfFillerEnabled && setActiveMainView('pdf-filler')}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         />
@@ -503,6 +514,8 @@ export const App = () => {
             selectedPatientId={selectedPatientId}
             userSettings={userSettings}
           />
+        ) : activeMainView === 'pdf-filler' && pdfFillerEnabled ? (
+          <PdfTemplatesPage onToast={showToast} />
         ) : activePatient ? (
           <PatientWorkspace
             key={activePatient.id}
@@ -515,6 +528,7 @@ export const App = () => {
             templateId={userSettings?.templateId || 'clinical_note'}
             onUploadHudChange={setUploadHudState}
             scribeEnabled={scribeEnabled}
+            pdfFillerEnabled={pdfFillerEnabled}
             navigationIntent={workspaceIntent}
             onNavigationIntentHandled={(intentId) =>
               setWorkspaceIntent((current) => (current?.id === intentId ? null : current))

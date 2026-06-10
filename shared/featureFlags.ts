@@ -10,6 +10,7 @@ export interface EffectiveFeatureFlags {
   adminAgent: boolean;
   scribe: boolean;
   billing: boolean;
+  pdfFiller: boolean;
 }
 
 function isRequiredConfigKeyEnabled(settings: UserSettings, key: string): boolean {
@@ -21,6 +22,8 @@ function isRequiredConfigKeyEnabled(settings: UserSettings, key: string): boolea
       return modules.scribe ?? true;
     case 'features.billing':
       return modules.billing ?? false;
+    case 'features.pdf_filler':
+      return modules.pdfFiller ?? false;
     case 'features.admissions':
       return modules.admissions ?? false;
     default:
@@ -45,11 +48,13 @@ export function resolveEffectiveFeatureFlags(
   const adminAgent = (modules.adminAgent ?? false) && isRegistryModuleEnabled(settings, byId.get('admin-agent-v1'));
   const scribe = (modules.scribe ?? true) && isRegistryModuleEnabled(settings, byId.get('scribe-agent-v1'));
   const billing = (modules.billing ?? false) && isRegistryModuleEnabled(settings, byId.get('billing-agent-v1'));
+  const pdfFiller = (modules.pdfFiller ?? false) && isRegistryModuleEnabled(settings, byId.get('pdf-filler-v1'));
 
   return {
     admissions: modules.admissions ?? false,
     adminAgent,
     scribe,
     billing,
+    pdfFiller,
   };
 }

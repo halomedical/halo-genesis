@@ -61,4 +61,8 @@ export const config = {
   smtpSecure: process.env.SMTP_SECURE === 'true',
   smtpUser: process.env.SMTP_USER || '',
   smtpPass: process.env.SMTP_PASS || '',
+
+  // PDF Filler Python sidecar (Layer C)
+  pdfFillerServiceUrl: (process.env.PDF_FILLER_SERVICE_URL || 'http://localhost:8000').replace(/\/$/, ''),
+  pdfFillerServiceSecret: process.env.PDF_FILLER_SERVICE_SECRET || '',
 } as const;

@@ -12,7 +12,9 @@ import haloRoutes from './routes/halo';
 import calendarRoutes from './routes/calendar';
 import requestTemplateRoutes from './routes/requestTemplate';
 import adminAgentRoutes from './routes/adminAgent';
+import pdfFillerRoutes from './routes/pdfFiller';
 import { requireFeature } from './middleware/requireFeature';
+import { pdfFillerHealthCheck } from './services/pdfFillerClient';
 import { attachTranscribeWebSocket } from './ws/transcribe';
 // Conversion scheduler disabled — was running in background for txt→docx→pdf
 // import { startScheduler } from './jobs/scheduler';
@@ -90,15 +92,18 @@ app.use('/api/halo', aiLimiter, haloRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/request-template', requestTemplateRoutes);
 app.use('/api/admin-agent', requireFeature('adminAgent'), adminAgentRoutes);
+app.use('/api/pdf-filler', requireFeature('pdfFiller'), pdfFillerRoutes);
 
 // Health check — returns server + dependency configuration status
-app.get('/api/health', (_req: Request, res: Response) => {
+app.get('/api/health', async (_req: Request, res: Response) => {
+  const sidecarOk = await pdfFillerHealthCheck();
   const checks: Record<string, 'ok' | 'unconfigured'> = {
     server: 'ok',
     gemini: config.geminiApiKey ? 'ok' : 'unconfigured',
     deepgram: config.deepgramApiKey ? 'ok' : 'unconfigured',
     haloApi: config.haloApiBaseUrl ? 'ok' : 'unconfigured',
     smtp: (config.smtpHost && config.smtpUser) ? 'ok' : 'unconfigured',
+    pdfFillerSidecar: sidecarOk ? 'ok' : 'unconfigured',
   };
   const allOk = Object.values(checks).every(v => v === 'ok');
   res.status(allOk ? 200 : 207).json({

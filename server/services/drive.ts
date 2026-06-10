@@ -1,5 +1,6 @@
 import mammoth from 'mammoth';
 import { config } from '../config';
+import { PRACTICE_ADMIN_FOLDER, PDF_DOCUMENTS_FOLDER } from '../../shared/folderStructure';
 
 // Polyfill browser APIs needed by pdf-parse (set up at module load time)
 // These are needed because pdf-parse's dependency pdfjs-dist uses them at module load
@@ -252,6 +253,61 @@ export async function getOrCreatePatientBillingEligibilityFolder(token: string, 
 
   const folder = (await createRes.json()) as { id: string };
   return folder.id;
+}
+
+async function getOrCreateSubfolder(
+  token: string,
+  parentFolderId: string,
+  folderName: string
+): Promise<string> {
+  const searchQuery = encodeURIComponent(
+    `'${parentFolderId}' in parents and name='${folderName.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`
+  );
+  const data = await driveRequest(token, `/files?q=${searchQuery}&fields=files(id)`);
+
+  if (data.files && data.files.length > 0) {
+    return data.files[0].id;
+  }
+
+  const createRes = await fetch(`${driveApi}/files`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: folderName,
+      parents: [parentFolderId],
+      mimeType: 'application/vnd.google-apps.folder',
+    }),
+  });
+
+  if (!createRes.ok) {
+    throw new Error(`[Drive ${createRes.status}] Failed to create folder "${folderName}"`);
+  }
+
+  const folder = (await createRes.json()) as { id: string };
+  return folder.id;
+}
+
+/**
+ * Halo/Practice Admin/PDF Documents — practice-wide PDF form templates.
+ */
+export async function getOrCreatePracticeAdminPdfDocumentsFolder(token: string): Promise<string> {
+  const haloRootId = await getHaloRootFolder(token);
+  const practiceAdminId = await getOrCreateSubfolder(token, haloRootId, PRACTICE_ADMIN_FOLDER);
+  return getOrCreateSubfolder(token, practiceAdminId, PDF_DOCUMENTS_FOLDER);
+}
+
+/**
+ * Find or create a standard patient subfolder (e.g. Letters, Scanned Documents).
+ */
+export async function getOrCreatePatientSubfolder(
+  token: string,
+  patientFolderId: string,
+  subfolderName: string
+): Promise<string> {
+  return getOrCreateSubfolder(token, patientFolderId, subfolderName);
 }
 
 /**

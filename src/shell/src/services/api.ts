@@ -1,5 +1,6 @@
 import { normalizeUserSettings } from '../../../../shared/types';
 import type { EffectiveFeatureFlags } from '../../../../shared/featureFlags';
+import type { PdfDocumentType, PdfTemplateManifestEntry } from '../../../../shared/pdfFiller';
 import type {
   AdmissionsBoard,
   Patient,
@@ -1015,3 +1016,41 @@ export const streamAgentChat = async (
     reader.releaseLock();
   }
 };
+
+// --- PDF Filler (Layer C) ---
+
+export const fetchPdfTemplates = () =>
+  request<{ templates: PdfTemplateManifestEntry[] }>('/api/pdf-filler/templates');
+
+export const fetchPdfTemplateSchema = (templateId: string) =>
+  request<{ template: PdfTemplateManifestEntry; schema: Record<string, unknown> }>(
+    `/api/pdf-filler/templates/${encodeURIComponent(templateId)}/schema`
+  );
+
+export const uploadPdfTemplate = (params: {
+  fileName: string;
+  fileData: string;
+  documentType: PdfDocumentType;
+  displayName?: string;
+}) =>
+  request<{ template: PdfTemplateManifestEntry }>('/api/pdf-filler/templates', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+
+export const deletePdfTemplate = (templateId: string) =>
+  request<{ success: boolean }>(`/api/pdf-filler/templates/${encodeURIComponent(templateId)}`, {
+    method: 'DELETE',
+  });
+
+export const fillPatientPdfForm = (patientId: string, params: {
+  templateId: string;
+  answers: Record<string, unknown>;
+}) =>
+  request<{ fileId: string; name: string; subfolder: string; templateId: string }>(
+    `/api/pdf-filler/patients/${encodeURIComponent(patientId)}/fill`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }
+  );

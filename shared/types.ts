@@ -106,6 +106,7 @@ export interface UserModulesSettings {
   adminAgent: boolean;
   scribe: boolean;
   billing: boolean;
+  pdfFiller: boolean;
 }
 
 export const DEFAULT_USER_MODULES: UserModulesSettings = {
@@ -113,6 +114,7 @@ export const DEFAULT_USER_MODULES: UserModulesSettings = {
   adminAgent: false,
   scribe: true,
   billing: false,
+  pdfFiller: false,
 };
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {

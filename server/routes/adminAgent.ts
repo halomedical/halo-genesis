@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/requireAuth';
-import { driveRequest, getHaloRootFolder } from '../services/drive';
+import { driveRequest, getHaloRootFolder, getOrCreatePracticeAdminPdfDocumentsFolder } from '../services/drive';
 import { config } from '../config';
 import {
   getVpsJwt,
@@ -537,6 +537,8 @@ router.post('/drive-folders/setup', async (req: Request, res: Response) => {
         folderIds[name] = created.id;
       })
     );
+
+    folderIds['Practice Admin/PDF Documents'] = await getOrCreatePracticeAdminPdfDocumentsFolder(token);
 
     const vpsJwt = await getVpsJwt(token, userEmail);
     await setVpsConfig(vpsJwt, 'agent_folders', JSON.stringify(folderIds));

@@ -206,6 +206,58 @@ If you use Railway, Render, Fly.io, etc.:
 
 ---
 
+## PDF Filler sidecar (Layer C)
+
+The PDF Filler module proxies extraction and fill to a **separate Python service** (see `services/pdf-filler-sidecar/README.md`). Genesis stays Node-only on Heroku; deploy the sidecar on Railway, Fly.io, Cloud Run, etc.
+
+### Genesis `.env`
+
+```bash
+PDF_FILLER_SERVICE_URL=https://your-pdf-filler-service.example.com
+# optional server-to-server header
+# PDF_FILLER_SERVICE_SECRET=
+```
+
+Enable the module in **Settings → PDF Filler** (and ensure `pdf-filler-v1` is in `registry/extensions.json`).
+
+### Sidecar `.env`
+
+```bash
+GEMINI_API_KEY=<same or dedicated key for Matchmaker extraction>
+```
+
+Run: `python api.py` (port 8000). Endpoints: `GET /health`, `POST /api/extract-schema`, `POST /api/fill`.
+
+### Google Drive layout
+
+Under the Halo root folder:
+
+- `Practice Admin/PDF Documents/` — template PDFs, `{name}.schema.json`, and `halo_pdf_templates.json` manifest.
+
+Admin Agent **Drive folder setup** (or first PDF template upload) creates this path.
+
+### Document type → patient subfolder
+
+| Upload type   | Filled PDF saved under patient folder |
+|---------------|----------------------------------------|
+| Insurance Form | Scanned Documents                   |
+| Consent       | Letters                                |
+| Referral      | Subspecialist Referral                 |
+| Clinical Form | Clerking Sheets                        |
+| Other         | Scanned Documents                      |
+
+### Local dev
+
+```bash
+# Terminal 1 — sidecar (pdf-filler repo)
+python api.py
+
+# Terminal 2 — genesis
+PDF_FILLER_SERVICE_URL=http://localhost:8000 npm run dev
+```
+
+---
+
 ## 8. Checklist
 
 - [ ] Chosen hostname (e.g. `app.halo.africa`)
