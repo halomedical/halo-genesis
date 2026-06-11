@@ -39,7 +39,7 @@ import { FileViewer } from '../components/FileViewer';
 import { FileBrowser } from '../components/FileBrowser';
 import { NoteEditor } from '../components/NoteEditor';
 import { PatientChat } from '../components/PatientChat';
-import { PdfPatientFormsTab } from '../modules/pdf-filler/components/PdfPatientFormsTab';
+import { PatientFormIntelligenceTab } from '../modules/pdf-filler/components/PatientFormIntelligenceTab';
 import type { UploadHudState } from '../components/UploadHud';
 import { getErrorMessage } from '../utils/formatting';
 
@@ -248,7 +248,9 @@ export const PatientWorkspace: React.FC<Props> = ({
   const [selectedTemplatesForGenerate, setSelectedTemplatesForGenerate] = useState<string[]>(['clinical_note']);
   const [templateSearch, setTemplateSearch] = useState('');
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
-  const [activeTab, setActiveTab] = useState<'overview' | 'notes' | 'chat' | 'sessions' | 'pdf-forms'>('overview');
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'notes' | 'chat' | 'sessions' | 'form-intelligence'
+  >('overview');
   const [savingNoteIndex, setSavingNoteIndex] = useState<number | null>(null);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [showCustomAiNoteModal, setShowCustomAiNoteModal] = useState(false);
@@ -1068,7 +1070,7 @@ export const PatientWorkspace: React.FC<Props> = ({
   }, [activeTab, scribeEnabled]);
 
   useEffect(() => {
-    if (!pdfFillerEnabled && activeTab === 'pdf-forms') {
+    if (!pdfFillerEnabled && activeTab === 'form-intelligence') {
       setActiveTab('overview');
     }
   }, [activeTab, pdfFillerEnabled]);
@@ -1560,7 +1562,7 @@ export const PatientWorkspace: React.FC<Props> = ({
             ...(scribeEnabled ? [{ id: 'notes', label: 'Scribe' }] : []),
             { id: 'chat', label: 'Agent' },
             ...(scribeEnabled ? [{ id: 'sessions', label: 'History' }] : []),
-            ...(pdfFillerEnabled ? [{ id: 'pdf-forms', label: 'PDF Forms' }] : []),
+            ...(pdfFillerEnabled ? [{ id: 'form-intelligence', label: 'Form Intelligence' }] : []),
           ].map(tab => (
             <button
               key={tab.id}
@@ -2143,8 +2145,8 @@ export const PatientWorkspace: React.FC<Props> = ({
                 </div>
               )}
             </>
-          ) : activeTab === 'pdf-forms' ? (
-            <PdfPatientFormsTab patient={patient} onToast={onToast} />
+          ) : activeTab === 'form-intelligence' ? (
+            <PatientFormIntelligenceTab patient={patient} onToast={onToast} />
           ) : (
             <PatientChat
               chatMessages={chatMessages}

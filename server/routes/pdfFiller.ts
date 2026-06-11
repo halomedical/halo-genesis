@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { randomUUID } from 'crypto';
+import { config } from '../config';
 import { requireAuth } from '../middleware/requireAuth';
 import {
   downloadFileBuffer,
@@ -7,13 +7,28 @@ import {
   getOrCreatePracticeAdminPdfDocumentsFolder,
   sanitizeString,
   uploadToDrive,
-  upsertJsonFileInFolder,
 } from '../services/drive';
 import {
+  handleExtractionRequest,
+  handleFillRequest,
+  handlePublishPracticeTemplate,
+  handleSaveTemplate,
+} from '../controllers/pdfFillerController';
+import { md5HexPdf } from '../services/pdfHash';
+import { extractDataFromPatientSummary } from '../services/pdfFillerAutofill';
+import {
+  autofillFromPatientSummary,
   extractSchemaFromPdf,
   fillPdfViaSidecar,
   pdfFillerHealthCheck,
 } from '../services/pdfFillerClient';
+import {
+  ensurePatientSummaryUpToDate,
+  persistPatientSummaryMarkdown,
+} from '../services/patientSummary';
+import { appendFormDataToMarkdown } from '../utils/patientSummaryFormEnrich';
+import { schemaPropertiesToFields } from '../utils/pdfSchemaUtils';
+import { savePracticePdfTemplate } from '../services/practicePdfTemplateStore';
 import {
   findTemplateEntry,
   loadPdfTemplatesManifest,
@@ -23,7 +38,6 @@ import {
   isPdfDocumentType,
   PDF_DOCUMENT_TYPE_TO_PATIENT_SUBFOLDER,
   type PdfDocumentType,
-  type PdfTemplateManifestEntry,
 } from '../../shared/pdfFiller';
 
 const router = Router();
@@ -37,11 +51,16 @@ function safeBaseName(fileName: string): string {
   return base.replace(/[^\w\s.-]/g, '_').slice(0, 120);
 }
 
+router.post('/extract', (req, res) => void handleExtractionRequest(req, res));
+router.post('/schema/global', (req, res) => void handleSaveTemplate(req, res));
+router.post('/templates/publish', (req, res) => void handlePublishPracticeTemplate(req, res));
+router.post('/fill', (req, res) => void handleFillRequest(req, res));
+
 router.get('/health', async (_req: Request, res: Response) => {
   const sidecarOk = await pdfFillerHealthCheck();
   res.status(sidecarOk ? 200 : 503).json({
     ok: sidecarOk,
-    sidecarUrl: process.env.PDF_FILLER_SERVICE_URL || 'http://localhost:8000',
+    sidecarUrl: config.pdfFillerServiceUrl,
   });
 });
 
@@ -129,43 +148,21 @@ router.post('/templates', async (req: Request, res: Response) => {
     const stem = safeBaseName(fileName);
     const displayName = displayNameInput || stem;
     const documentType = documentTypeRaw as PdfDocumentType;
+    const pdfHash = md5HexPdf(pdfBuffer);
 
     const schema = await extractSchemaFromPdf(pdfBuffer, fileName);
     const extractionMethod = String(schema['x-extraction-method'] || 'unknown');
     const schemaVersion = Number(schema['x-schema-build-version'] || 0);
 
-    const folderId = await getOrCreatePracticeAdminPdfDocumentsFolder(token);
-    const pdfDriveFileId = await uploadToDrive(
+    const entry = await savePracticePdfTemplate({
       token,
-      `${stem}.pdf`,
-      'application/pdf',
-      folderId,
+      fileName,
       pdfBuffer,
-      { halo_pdf_template: '1', document_type: documentType }
-    );
-    const schemaDriveFileId = await upsertJsonFileInFolder(
-      token,
-      folderId,
-      `${stem}.schema.json`,
+      pdfHash,
       schema,
-      { halo_pdf_template_schema: '1', document_type: documentType }
-    );
-
-    const { manifest } = await loadPdfTemplatesManifest(token, folderId);
-    const now = new Date().toISOString();
-    const entry: PdfTemplateManifestEntry = {
-      templateId: randomUUID(),
-      displayName,
       documentType,
-      pdfDriveFileId,
-      schemaDriveFileId,
-      extractionMethod,
-      schemaVersion,
-      createdAt: now,
-      updatedAt: now,
-    };
-    manifest.templates.push(entry);
-    await savePdfTemplatesManifest(token, folderId, manifest);
+      displayName,
+    });
 
     res.json({ template: entry });
   } catch (err) {
@@ -199,12 +196,111 @@ router.delete('/templates/:templateId', async (req: Request, res: Response) => {
   }
 });
 
+class TemplateNotFoundError extends Error {
+  constructor() {
+    super('TEMPLATE_NOT_FOUND');
+    this.name = 'TemplateNotFoundError';
+  }
+}
+
+async function resolveTemplateEntry(token: string, templateId: string) {
+  const folderId = await getOrCreatePracticeAdminPdfDocumentsFolder(token);
+  const { manifest } = await loadPdfTemplatesManifest(token, folderId);
+  const entry = findTemplateEntry(manifest, templateId);
+  if (!entry) throw new TemplateNotFoundError();
+  return entry;
+}
+
+async function loadTemplateSchema(
+  token: string,
+  templateId: string
+): Promise<Record<string, unknown>> {
+  const entry = await resolveTemplateEntry(token, templateId);
+  const schemaBuffer = await downloadFileBuffer(token, entry.schemaDriveFileId);
+  return JSON.parse(schemaBuffer.toString('utf-8')) as Record<string, unknown>;
+}
+
+async function loadTemplatePdfAndSchema(
+  token: string,
+  templateId: string
+): Promise<{
+  entry: NonNullable<ReturnType<typeof findTemplateEntry>>;
+  pdfBuffer: Buffer;
+  schema: Record<string, unknown>;
+}> {
+  const entry = await resolveTemplateEntry(token, templateId);
+  const [pdfBuffer, schemaBuffer] = await Promise.all([
+    downloadFileBuffer(token, entry.pdfDriveFileId),
+    downloadFileBuffer(token, entry.schemaDriveFileId),
+  ]);
+  const schema = JSON.parse(schemaBuffer.toString('utf-8')) as Record<string, unknown>;
+  return { entry, pdfBuffer, schema };
+}
+
+function isSidecarRouteMissing(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.message.includes('(404)') || err.message.includes('"Not Found"'))
+  );
+}
+
+async function autofillFieldValues(
+  markdown: string,
+  schemaFields: ReturnType<typeof schemaPropertiesToFields>,
+  patientFolderId: string
+): Promise<Record<string, string | null>> {
+  try {
+    return await autofillFromPatientSummary(markdown, schemaFields, patientFolderId);
+  } catch (err) {
+    if (!isSidecarRouteMissing(err)) throw err;
+    console.warn(
+      '[pdf-filler] Sidecar /api/autofill not available — using Genesis Gemini autofill'
+    );
+    return extractDataFromPatientSummary(schemaFields, markdown);
+  }
+}
+
+router.post('/patients/:patientId/autofill', async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const patientFolderId = String(req.params.patientId);
+    const templateId = sanitizeString(req.body.templateId, 64);
+
+    if (!templateId) {
+      res.status(400).json({ error: 'templateId is required.' });
+      return;
+    }
+
+    let schema: Record<string, unknown>;
+    try {
+      schema = await loadTemplateSchema(token, templateId);
+    } catch (e) {
+      if (e instanceof TemplateNotFoundError) {
+        res.status(404).json({ error: 'Template not found.' });
+        return;
+      }
+      throw e;
+    }
+
+    const { markdown } = await ensurePatientSummaryUpToDate(token, patientFolderId);
+    const schemaFields = schemaPropertiesToFields(schema);
+    const values = await autofillFieldValues(markdown, schemaFields, patientFolderId);
+
+    res.json({ values });
+  } catch (err) {
+    console.error('[pdf-filler] autofill:', err);
+    const message = err instanceof Error ? err.message : 'Autofill failed.';
+    res.status(500).json({ error: 'Failed to autofill from patient summary.', detail: message });
+  }
+});
+
 router.post('/patients/:patientId/fill', async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const patientFolderId = String(req.params.patientId);
     const templateId = sanitizeString(req.body.templateId, 64);
     const answers = req.body.answers as Record<string, unknown> | undefined;
+    const newlyAddedData = req.body.newlyAddedData as Record<string, unknown> | undefined;
 
     if (!templateId) {
       res.status(400).json({ error: 'templateId is required.' });
@@ -215,19 +311,36 @@ router.post('/patients/:patientId/fill', async (req: Request, res: Response) => 
       return;
     }
 
-    const folderId = await getOrCreatePracticeAdminPdfDocumentsFolder(token);
-    const { manifest } = await loadPdfTemplatesManifest(token, folderId);
-    const entry = findTemplateEntry(manifest, templateId);
-    if (!entry) {
-      res.status(404).json({ error: 'Template not found.' });
-      return;
+    let entry;
+    let pdfBuffer: Buffer;
+    let schema: Record<string, unknown>;
+    try {
+      ({ entry, pdfBuffer, schema } = await loadTemplatePdfAndSchema(token, templateId));
+    } catch (e) {
+      if (e instanceof TemplateNotFoundError) {
+        res.status(404).json({ error: 'Template not found.' });
+        return;
+      }
+      throw e;
     }
 
-    const [pdfBuffer, schemaBuffer] = await Promise.all([
-      downloadFileBuffer(token, entry.pdfDriveFileId),
-      downloadFileBuffer(token, entry.schemaDriveFileId),
-    ]);
-    const schema = JSON.parse(schemaBuffer.toString('utf-8')) as Record<string, unknown>;
+    const schemaFields = schemaPropertiesToFields(schema);
+    const hasNewData =
+      newlyAddedData &&
+      typeof newlyAddedData === 'object' &&
+      Object.keys(newlyAddedData).length > 0;
+
+    if (hasNewData) {
+      const { markdown } = await ensurePatientSummaryUpToDate(token, patientFolderId);
+      const enrichedMarkdown = appendFormDataToMarkdown(
+        markdown,
+        newlyAddedData,
+        schemaFields
+      );
+      if (enrichedMarkdown !== markdown) {
+        await persistPatientSummaryMarkdown(token, patientFolderId, enrichedMarkdown);
+      }
+    }
 
     const filledPdf = await fillPdfViaSidecar(pdfBuffer, schema, answers);
 

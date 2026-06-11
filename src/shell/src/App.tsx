@@ -8,7 +8,7 @@ import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, cre
 import { AdminAgentPanel } from './modules/admin-agent/components/AdminAgentPanel';
 import { AdminAgentOnboarding } from './modules/admin-agent/components/AdminAgentOnboarding';
 import { BillingPage } from './modules/billing/BillingPage';
-import { PdfTemplatesPage } from './modules/pdf-filler/PdfTemplatesPage';
+import { PdfFillerHubPage } from './modules/pdf-filler/PdfFillerHubPage';
 import type { Patient, UserSettings, CalendarEvent } from '../../../shared/types';
 import type { EffectiveFeatureFlags } from '../../../shared/featureFlags';
 import type { StickerExtractedData } from './services/api';
@@ -515,7 +515,7 @@ export const App = () => {
             userSettings={userSettings}
           />
         ) : activeMainView === 'pdf-filler' && pdfFillerEnabled ? (
-          <PdfTemplatesPage onToast={showToast} />
+          <PdfFillerHubPage onToast={showToast} />
         ) : activePatient ? (
           <PatientWorkspace
             key={activePatient.id}

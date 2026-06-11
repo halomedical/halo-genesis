@@ -2,9 +2,15 @@
 
 Halo Genesis proxies PDF extraction and fill to this service. Deploy it separately from the Node monolith (Railway, Fly.io, Cloud Run, etc.).
 
+**Full architecture, branch layout, Supabase cache, and security model:** [`docs/PDF_FILLER_INTEGRATION_BLUEPRINT.md`](../../docs/PDF_FILLER_INTEGRATION_BLUEPRINT.md).
+
+Railway artifacts in this folder (`Dockerfile`, `railway.toml`, `start.sh`) are templates — copy them into the **pdf-filler** repo that contains `api.py`.
+
 ## Source
 
-Implementation lives in the pdf-filler project (`api.py`, `pdf_json_pipeline.py`). Point deployment at that repo or copy these files into this directory.
+**Canonical repository:** [halomedical/pdf-mapper-endpoint](https://github.com/halomedical/pdf-mapper-endpoint) (`api.py`, `pdf_json_pipeline.py`). Deploy that repo on Railway; do not deploy halo-genesis for the extractor.
+
+Legacy name: pdf-filler sidecar. Deployment templates in this folder mirror the mapper endpoint repo.
 
 ## Run locally
 

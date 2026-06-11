@@ -650,7 +650,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={() => onOpenPdfFiller?.()}
-              title="PDF Templates"
+              title="Form Intelligence"
               className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
                 pdfFillerActive
                   ? 'bg-cyan-50 text-cyan-700'
@@ -662,7 +662,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className={pdfFillerActive ? 'text-cyan-600' : 'text-slate-400'}
               />
               {!collapsed && (
-                <span className="flex-1 text-left">PDF Templates</span>
+                <span className="flex-1 text-left">Form Intelligence</span>
               )}
             </button>
           </div>

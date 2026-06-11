@@ -12,6 +12,17 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+/** Railway UI often copies host only; Node fetch requires a scheme. */
+function normalizePdfFillerServiceUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/$/, '');
+  if (!trimmed) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('localhost') || trimmed.startsWith('127.0.0.1')) {
+    return `http://${trimmed}`;
+  }
+  return `https://${trimmed}`;
+}
+
 // --- Validated Config Export ---
 export const config = {
   // Google OAuth
@@ -62,7 +73,17 @@ export const config = {
   smtpUser: process.env.SMTP_USER || '',
   smtpPass: process.env.SMTP_PASS || '',
 
-  // PDF Filler Python sidecar (Layer C)
-  pdfFillerServiceUrl: (process.env.PDF_FILLER_SERVICE_URL || 'http://localhost:8000').replace(/\/$/, ''),
-  pdfFillerServiceSecret: process.env.PDF_FILLER_SERVICE_SECRET || '',
+  // PDF Filler Python sidecar (Layer C) — pdf-mapper-endpoint on Railway
+  pdfFillerServiceUrl: normalizePdfFillerServiceUrl(
+    process.env.PDF_FILLER_SERVICE_URL ||
+      'https://pdf-mapper-endpoint-production.up.railway.app'
+  ),
+  pdfFillerServiceSecret:
+    process.env.PDF_FILLER_SERVICE_SECRET ||
+    process.env.PDF_FILLER_SECRET_KEY ||
+    '',
+
+  // Global PDF layout cache (no PHI)
+  supabaseUrl: process.env.SUPABASE_URL || '',
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
 } as const;

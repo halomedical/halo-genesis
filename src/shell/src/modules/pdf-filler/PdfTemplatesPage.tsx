@@ -7,24 +7,12 @@ import {
   type PdfTemplateManifestEntry,
 } from '../../../../../shared/pdfFiller';
 import { deletePdfTemplate, fetchPdfTemplates, uploadPdfTemplate } from './services/api';
+import { fileToBase64 } from './form-intelligence/utils/pdfFile';
 
 type ToastFn = (message: string, type: 'success' | 'error' | 'info') => void;
 
 interface PdfTemplatesPageProps {
   onToast?: ToastFn;
-}
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.includes(',') ? result.split(',')[1] : result;
-      resolve(base64);
-    };
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsDataURL(file);
-  });
 }
 
 export const PdfTemplatesPage: React.FC<PdfTemplatesPageProps> = ({ onToast }) => {
@@ -90,7 +78,7 @@ export const PdfTemplatesPage: React.FC<PdfTemplatesPageProps> = ({ onToast }) =
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-8">
+    <div className="h-full overflow-y-auto bg-slate-50 p-6 md:p-8">
       <div className="max-w-4xl mx-auto space-y-8">
         <header>
           <div className="flex items-center gap-3">

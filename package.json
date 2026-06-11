@@ -24,6 +24,7 @@
   "dependencies": {
     "@deepgram/sdk": "^4.11.3",
     "@google/generative-ai": "^0.24.1",
+    "@supabase/supabase-js": "^2.108.1",
     "cors": "^2.8.6",
     "docx": "^9.5.1",
     "dotenv": "^17.2.4",

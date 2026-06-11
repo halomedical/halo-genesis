@@ -456,4 +456,19 @@ export async function refreshPatientSummaryInBackground(
   }
 }
 
+/** Overwrite patient-summary.md with the given markdown (e.g. after form enrichment). */
+export async function persistPatientSummaryMarkdown(
+  token: string,
+  patientId: string,
+  markdown: string
+): Promise<void> {
+  await upsertTextFileInFolder(
+    token,
+    patientId,
+    SUMMARY_MARKDOWN_FILE_NAME,
+    markdown,
+    'text/markdown'
+  );
+}
+
 export { SUMMARY_MARKDOWN_FILE_NAME, SUMMARY_STATE_FILE_NAME };

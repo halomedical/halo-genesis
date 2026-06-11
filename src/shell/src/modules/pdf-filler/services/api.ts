@@ -3,5 +3,10 @@ export {
   fetchPdfTemplateSchema,
   uploadPdfTemplate,
   deletePdfTemplate,
+  autofillPatientPdfForm,
   fillPatientPdfForm,
+  extractPdfTemplateSchema,
+  publishPracticePdfTemplate,
+  saveGlobalPdfTemplateSchema,
+  fillPdfFormStream,
 } from '../../../services/api';

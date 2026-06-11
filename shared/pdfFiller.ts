@@ -35,6 +35,8 @@ export interface PdfTemplateManifestEntry {
   documentType: PdfDocumentType;
   pdfDriveFileId: string;
   schemaDriveFileId: string;
+  /** MD5 hex of blank PDF bytes — used to upsert the same template from Form Studio. */
+  pdfHash?: string;
   extractionMethod: string;
   schemaVersion: number;
   createdAt: string;

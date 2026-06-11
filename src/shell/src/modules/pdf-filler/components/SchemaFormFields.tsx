@@ -13,9 +13,16 @@ interface SchemaFormFieldsProps {
   schema: Record<string, unknown>;
   values: Record<string, string | boolean>;
   onChange: (key: string, value: string | boolean) => void;
+  /** Override inner scroll container (e.g. full-height patient questionnaire). */
+  scrollClassName?: string;
 }
 
-export const SchemaFormFields: React.FC<SchemaFormFieldsProps> = ({ schema, values, onChange }) => {
+export const SchemaFormFields: React.FC<SchemaFormFieldsProps> = ({
+  schema,
+  values,
+  onChange,
+  scrollClassName,
+}) => {
   const properties = (schema.properties || {}) as Record<string, JsonSchemaProperty>;
   const keys = Object.keys(properties);
 
@@ -25,12 +32,22 @@ export const SchemaFormFields: React.FC<SchemaFormFieldsProps> = ({ schema, valu
     );
   }
 
+  const scrollClasses =
+    scrollClassName ?? 'space-y-4 max-h-[min(60vh,520px)] overflow-y-auto pr-1';
+
   return (
-    <div className="space-y-4 max-h-[min(60vh,520px)] overflow-y-auto pr-1">
+    <div className={scrollClasses.includes('space-y') ? scrollClasses : `space-y-4 ${scrollClasses}`}>
       {keys.map((key) => {
         const prop = properties[key] || {};
         const label = prop.title || key;
-        const fieldType = prop.type === 'boolean' ? 'checkbox' : prop.format === 'date' ? 'date' : 'text';
+        const fieldType =
+          prop.type === 'boolean'
+            ? 'checkbox'
+            : prop.type === 'integer' || prop.type === 'number'
+              ? 'number'
+              : prop.format === 'date'
+                ? 'date'
+                : 'text';
         const value = values[key];
 
         if (fieldType === 'checkbox') {
@@ -53,11 +70,17 @@ export const SchemaFormFields: React.FC<SchemaFormFieldsProps> = ({ schema, valu
               {label}
             </label>
             <input
-              type={fieldType === 'date' ? 'date' : 'text'}
+              type={fieldType === 'date' ? 'date' : fieldType === 'number' ? 'number' : 'text'}
+              inputMode={fieldType === 'number' ? 'numeric' : undefined}
+              step={fieldType === 'number' ? '1' : undefined}
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
               value={typeof value === 'string' ? value : ''}
-              maxLength={prop.maxLength}
-              onChange={(e) => onChange(key, e.target.value)}
+              maxLength={fieldType === 'number' ? undefined : prop.maxLength}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (fieldType === 'number' && next !== '' && !/^-?\d*$/.test(next)) return;
+                onChange(key, next);
+              }}
             />
           </div>
         );

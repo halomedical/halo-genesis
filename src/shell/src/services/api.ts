@@ -1043,9 +1043,19 @@ export const deletePdfTemplate = (templateId: string) =>
     method: 'DELETE',
   });
 
+export const autofillPatientPdfForm = (patientId: string, params: { templateId: string }) =>
+  request<{ values: Record<string, string | null> }>(
+    `/api/pdf-filler/patients/${encodeURIComponent(patientId)}/autofill`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }
+  );
+
 export const fillPatientPdfForm = (patientId: string, params: {
   templateId: string;
   answers: Record<string, unknown>;
+  newlyAddedData?: Record<string, unknown>;
 }) =>
   request<{ fileId: string; name: string; subfolder: string; templateId: string }>(
     `/api/pdf-filler/patients/${encodeURIComponent(patientId)}/fill`,
@@ -1054,3 +1064,81 @@ export const fillPatientPdfForm = (patientId: string, params: {
       body: JSON.stringify(params),
     }
   );
+
+export const extractPdfTemplateSchema = (params: { fileName: string; fileData: string }) =>
+  request<{
+    pdfHash: string;
+    schema: Record<string, unknown>;
+    cacheHit: boolean;
+    extractionMethod: string;
+    schemaVersion: number;
+  }>('/api/pdf-filler/extract', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+
+export const publishPracticePdfTemplate = (params: {
+  fileName: string;
+  fileData: string;
+  pdfHash: string;
+  schema: Record<string, unknown>;
+  documentType: PdfDocumentType;
+  displayName: string;
+  templateId?: string;
+  extractionMethod?: string;
+  schemaVersion?: number;
+  baselineSchema?: Record<string, unknown>;
+  baselineExtractionMethod?: string;
+}) =>
+  request<{
+    success: boolean;
+    pdfHash: string;
+    template: PdfTemplateManifestEntry;
+    globalCacheUpdated: boolean;
+  }>('/api/pdf-filler/templates/publish', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+
+export const saveGlobalPdfTemplateSchema = (params: {
+  pdfHash: string;
+  schema: Record<string, unknown>;
+  extractionMethod?: string;
+  schemaVersion?: number;
+  baselineSchema?: Record<string, unknown>;
+  baselineExtractionMethod?: string;
+}) =>
+  request<{ success: boolean; pdfHash: string; extractionMethod: string; schemaVersion: number }>(
+    '/api/pdf-filler/schema/global',
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }
+  );
+
+/** Returns filled PDF bytes; caller uploads to Google Drive. */
+export async function fillPdfFormStream(params: {
+  fileName: string;
+  fileData: string;
+  schema: Record<string, unknown>;
+  answers: Record<string, unknown>;
+}): Promise<Blob> {
+  const url = `${API_BASE}/api/pdf-filler/fill`;
+  const res = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    let message = 'PDF fill failed.';
+    try {
+      const err = (await res.json()) as { error?: string; detail?: string };
+      message = err.detail || err.error || message;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(message, res.status);
+  }
+  return res.blob();
+}
