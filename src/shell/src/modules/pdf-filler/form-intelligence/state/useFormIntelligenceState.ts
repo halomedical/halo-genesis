@@ -25,6 +25,9 @@ export function useFormIntelligenceState() {
   const [pdfHash, setPdfHash] = useState('');
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const [baselineSchema, setBaselineSchema] = useState<Record<string, unknown> | null>(null);
+  const [extractionRunId, setExtractionRunId] = useState('');
+  const [pdfSha256, setPdfSha256] = useState('');
+  const [predictionJson, setPredictionJson] = useState<Record<string, unknown> | null>(null);
   const [formData, setFormData] = useState<Record<string, string | boolean>>({});
   const [currentPage, setCurrentPage] = useState(1);
   const [numPages, setNumPages] = useState(0);
@@ -42,6 +45,9 @@ export function useFormIntelligenceState() {
     setPdfHash('');
     setSchema(null);
     setBaselineSchema(null);
+    setExtractionRunId('');
+    setPdfSha256('');
+    setPredictionJson(null);
     setFormData({});
     setCurrentPage(1);
     setNumPages(0);
@@ -54,11 +60,18 @@ export function useFormIntelligenceState() {
   const applyExtractResult = useCallback(
     (result: {
       pdfHash: string;
+      pdfSha256: string;
       schema: Record<string, unknown>;
       cacheHit: boolean;
       extractionMethod: string;
+      schemaVersion?: number;
+      extractionRunId: string;
+      predictionJson: Record<string, unknown>;
     }) => {
       setPdfHash(result.pdfHash);
+      setPdfSha256(result.pdfSha256);
+      setExtractionRunId(result.extractionRunId);
+      setPredictionJson(result.predictionJson);
       setSchema(result.schema);
       setBaselineSchema(cloneSchema(result.schema));
       setFormData(initialFormDataFromSchema(result.schema));
@@ -176,6 +189,10 @@ export function useFormIntelligenceState() {
     pdfHash,
     schema,
     baselineSchema,
+    extractionRunId,
+    pdfSha256,
+    predictionJson,
+    setExtractionRunId,
     setSchema,
     formData,
     setFormData,

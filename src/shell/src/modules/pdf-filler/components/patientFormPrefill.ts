@@ -1,4 +1,7 @@
 import type { Patient } from '../../../../../../shared/types';
+import { findManuallyTypedFields, mergeHumanFieldDeltas } from '../../../../../../shared/patientFormDeltas';
+
+export { findManuallyTypedFields, mergeHumanFieldDeltas };
 
 type JsonSchemaProperty = { title?: string; type?: string };
 
@@ -70,35 +73,5 @@ export function mergePatientIntoFormValues(
     }
   }
 
-  return out;
-}
-
-function valueForCompare(value: string | boolean | null | undefined): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'boolean') return value ? 'Yes' : '';
-  return value.trim();
-}
-
-/** Fields the user filled or changed after AI autofill (for summary enrichment). */
-export function findManuallyTypedFields(
-  autofillBaseline: Record<string, string | boolean | null | undefined> | null | undefined,
-  finalValues: Record<string, string | boolean>
-): Record<string, string | boolean> {
-  if (!autofillBaseline) return {};
-
-  const out: Record<string, string | boolean> = {};
-  for (const [key, finalVal] of Object.entries(finalValues)) {
-    const finalStr = valueForCompare(finalVal);
-    if (!finalStr && finalVal !== false) continue;
-
-    const baseStr = valueForCompare(autofillBaseline[key]);
-    if (!baseStr && finalStr) {
-      out[key] = finalVal;
-      continue;
-    }
-    if (baseStr && finalStr && finalStr !== baseStr) {
-      out[key] = finalVal;
-    }
-  }
   return out;
 }

@@ -11,7 +11,13 @@ import {
   isFormTemplateCacheConfigured,
   upsertGlobalSchema,
 } from '../services/formTemplateCache';
-import { isValidPdfHash, md5HexPdf } from '../services/pdfHash';
+import { isValidPdfHash, isValidPdfSha256, md5HexPdf, sha256HexPdf } from '../services/pdfHash';
+import type { MappingFeedbackRequest, ValidatedMappingField } from '../../shared/mappingFeedback';
+import { SHA256_HEX_RE, UUID_RE } from '../../shared/mappingFeedback';
+import {
+  insertMappingApproval,
+  isMappingCorrectionStoreConfigured,
+} from '../services/mappingCorrectionStore';
 import { decodeBase64Pdf, pipeWebStreamToExpress } from '../utils/streamUtils';
 import { countSchemaProperties, normalizeSidecarSchema } from '../utils/pdfSchemaUtils';
 import { diffLayoutSchemas } from '../utils/schemaLayoutDiff';
@@ -19,6 +25,7 @@ import {
   insertLayoutCorrection,
   isFormLayoutCorrectionStoreConfigured,
 } from '../services/formLayoutCorrectionStore';
+import { insertPdfExtractionTelemetry } from '../services/pdfExtractionTelemetryStore';
 
 function schemaMeta(schema: Record<string, unknown>): {
   extractionMethod: string;
@@ -52,6 +59,13 @@ function sendControllerError(res: Response, status: number, err: unknown, fallba
  * Accepts a blank PDF upload, resolves schema via Supabase cache or Railway extract-schema.
  */
 export async function handleExtractionRequest(req: Request, res: Response): Promise<void> {
+  const startedAt = performance.now();
+  let fileSizeBytes = 0;
+  let pdfHash: string | null = null;
+  let cacheHit = false;
+  let extractionMethod: string | null = null;
+  let success = false;
+
   try {
     const fileName = sanitizeString(req.body.fileName, 255);
     const fileData = req.body.fileData as string | undefined;
@@ -62,7 +76,9 @@ export async function handleExtractionRequest(req: Request, res: Response): Prom
     }
 
     const pdfBuffer = decodeBase64Pdf(fileData ?? '');
-    const pdfHash = md5HexPdf(pdfBuffer);
+    fileSizeBytes = pdfBuffer.length;
+    pdfHash = md5HexPdf(pdfBuffer);
+    const pdfSha256 = sha256HexPdf(pdfBuffer);
 
     if (isFormTemplateCacheConfigured()) {
       const cached = await getGlobalSchemaByHash(pdfHash);
@@ -71,8 +87,12 @@ export async function handleExtractionRequest(req: Request, res: Response): Prom
           cached.schema_json as Record<string, unknown>
         );
         if (countSchemaProperties(cachedSchema) > 0) {
+          cacheHit = true;
+          extractionMethod = cached.extraction_method;
+          success = true;
           res.json({
             pdfHash,
+            pdfSha256,
             schema: cachedSchema,
             cacheHit: true,
             extractionMethod: cached.extraction_method,
@@ -92,14 +112,16 @@ export async function handleExtractionRequest(req: Request, res: Response): Prom
       });
       return;
     }
-    const { extractionMethod, schemaVersion } = schemaMeta(schema);
+    const meta = schemaMeta(schema);
+    extractionMethod = meta.extractionMethod;
+    const { extractionMethod: extractionMethodOut, schemaVersion } = meta;
 
     if (isFormTemplateCacheConfigured() && countSchemaProperties(schema) > 0) {
       try {
         await upsertGlobalSchema({
           pdf_hash: pdfHash,
           schema_json: schema,
-          extraction_method: extractionMethod,
+          extraction_method: extractionMethodOut,
           schema_version: schemaVersion,
         });
       } catch (cacheErr) {
@@ -107,15 +129,29 @@ export async function handleExtractionRequest(req: Request, res: Response): Prom
       }
     }
 
+    success = true;
     res.json({
       pdfHash,
+      pdfSha256,
       schema,
       cacheHit: false,
-      extractionMethod,
+      extractionMethod: extractionMethodOut,
       schemaVersion,
     });
   } catch (err) {
     sendControllerError(res, 500, err, 'Extraction failed');
+  } finally {
+    if (fileSizeBytes > 0) {
+      void insertPdfExtractionTelemetry({
+        pdf_hash: pdfHash,
+        file_size_bytes: fileSizeBytes,
+        duration_ms: performance.now() - startedAt,
+        cache_hit: cacheHit,
+        extraction_method: extractionMethod,
+        flow: 'extract_api',
+        success,
+      });
+    }
   }
 }
 
@@ -298,6 +334,129 @@ export async function handlePublishPracticeTemplate(req: Request, res: Response)
     });
   } catch (err) {
     sendControllerError(res, 500, err, 'Failed to publish practice template');
+  }
+}
+
+function parseValidatedMappingFields(raw: unknown): ValidatedMappingField[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: ValidatedMappingField[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const row = item as Record<string, unknown>;
+    const fieldId = typeof row.field_id === 'string' ? row.field_id.trim() : '';
+    if (!fieldId) return null;
+    const page = Number(row.page);
+    if (!Number.isFinite(page) || page < 1) return null;
+    const action = row.action;
+    if (
+      action !== 'unchanged' &&
+      action !== 'move' &&
+      action !== 'resize' &&
+      action !== 'add' &&
+      action !== 'delete' &&
+      action !== 'relabel'
+    ) {
+      return null;
+    }
+    const parseRect = (v: unknown, required: boolean): ValidatedMappingField['pred'] => {
+      if (v == null) return required ? null : null;
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+      const r = v as Record<string, unknown>;
+      const x = Number(r.x);
+      const y = Number(r.y);
+      const width = Number(r.width);
+      const height = Number(r.height);
+      if (![x, y, width, height].every((n) => Number.isFinite(n))) return null;
+      return { x, y, width, height };
+    };
+    const pred = parseRect(row.pred, false);
+    const valid = parseRect(row.valid, true);
+    if (!valid) return null;
+    if (action === 'add' && pred !== null) return null;
+    out.push({
+      field_id: fieldId,
+      page: Math.round(page),
+      label: typeof row.label === 'string' ? row.label : null,
+      field_type: typeof row.field_type === 'string' ? row.field_type : null,
+      pred,
+      valid,
+      action,
+    });
+  }
+  return out;
+}
+
+/**
+ * Persists human-approved mapping corrections (service role) for model training telemetry.
+ */
+export async function handleApproveMapping(req: Request, res: Response): Promise<void> {
+  try {
+    if (!isMappingCorrectionStoreConfigured()) {
+      res.status(503).json({
+        error: 'Supabase is not configured (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).',
+      });
+      return;
+    }
+
+    const body = req.body as MappingFeedbackRequest;
+    const extractionRunId = sanitizeString(body.extraction_run_id, 64);
+    const pdfSha256 = sanitizeString(body.pdf_sha256, 128).toLowerCase();
+    const sourceFilename = sanitizeString(body.source_filename ?? '', 512) || null;
+    const predictionJson = body.prediction_json;
+    const notes = sanitizeString(body.notes ?? '', 2000) || null;
+
+    if (!UUID_RE.test(extractionRunId)) {
+      res.status(400).json({ error: 'extraction_run_id must be a UUID.' });
+      return;
+    }
+    if (!isValidPdfSha256(pdfSha256)) {
+      res.status(400).json({ error: 'pdf_sha256 must be a 64-character hex SHA-256 digest.' });
+      return;
+    }
+    if (!predictionJson || typeof predictionJson !== 'object' || Array.isArray(predictionJson)) {
+      res.status(400).json({ error: 'prediction_json must be a JSON object.' });
+      return;
+    }
+    const predictionSha =
+      typeof predictionJson.pdf_sha256 === 'string'
+        ? predictionJson.pdf_sha256.toLowerCase()
+        : null;
+    if (predictionSha && SHA256_HEX_RE.test(predictionSha) && predictionSha !== pdfSha256) {
+      res.status(400).json({ error: 'pdf_sha256 does not match prediction_json.pdf_sha256.' });
+      return;
+    }
+
+    const validatedFields = parseValidatedMappingFields(body.validated_fields);
+    if (!validatedFields) {
+      res.status(400).json({
+        error: 'validated_fields must be a non-empty array of field correction rows.',
+      });
+      return;
+    }
+
+    const { correctionId } = await insertMappingApproval({
+      extractionRunId,
+      pdfSha256,
+      sourceFilename,
+      predictionJson: { ...predictionJson, pdf_sha256: pdfSha256 },
+      validatedFields,
+      reviewerId: null,
+      notes,
+    });
+
+    res.json({
+      success: true,
+      extraction_run_id: extractionRunId,
+      correction_id: correctionId,
+      field_count: validatedFields.length,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Approve mapping failed';
+    if (message.includes('duplicate key') || message.includes('mapping_corrections_one_per_run_key')) {
+      res.status(409).json({ error: 'This extraction run was already approved.', detail: message });
+      return;
+    }
+    sendControllerError(res, 500, err, 'Failed to approve mapping');
   }
 }
 

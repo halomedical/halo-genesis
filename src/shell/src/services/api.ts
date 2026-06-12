@@ -1057,7 +1057,13 @@ export const fillPatientPdfForm = (patientId: string, params: {
   answers: Record<string, unknown>;
   newlyAddedData?: Record<string, unknown>;
 }) =>
-  request<{ fileId: string; name: string; subfolder: string; templateId: string }>(
+  request<{
+    fileId: string;
+    name: string;
+    subfolder: string;
+    templateId: string;
+    summaryFieldsUpdated?: number;
+  }>(
     `/api/pdf-filler/patients/${encodeURIComponent(patientId)}/fill`,
     {
       method: 'POST',
@@ -1065,14 +1071,48 @@ export const fillPatientPdfForm = (patientId: string, params: {
     }
   );
 
+export type PdfExtractionFlow = 'extract_api' | 'template_upload';
+
+export const fetchPdfExtractionEstimate = (params: {
+  fileSizeBytes: number;
+  flow: PdfExtractionFlow;
+}) => {
+  const q = new URLSearchParams({
+    fileSizeBytes: String(params.fileSizeBytes),
+    flow: params.flow,
+  });
+  return request<{ baselineDurationMs: number; paddedDurationMs: number }>(
+    `/api/pdf-filler/extract/estimate?${q.toString()}`
+  );
+};
+
 export const extractPdfTemplateSchema = (params: { fileName: string; fileData: string }) =>
   request<{
     pdfHash: string;
+    pdfSha256: string;
     schema: Record<string, unknown>;
     cacheHit: boolean;
     extractionMethod: string;
     schemaVersion: number;
   }>('/api/pdf-filler/extract', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+
+export const approvePdfMapping = (params: {
+  extraction_run_id: string;
+  pdf_sha256: string;
+  source_filename?: string | null;
+  prediction_json: Record<string, unknown>;
+  validated_fields: import('../../../../shared/mappingFeedback').ValidatedMappingField[];
+  notes?: string | null;
+}) =>
+  request<{
+    success: boolean;
+    extraction_run_id: string;
+    correction_id: string;
+    field_count: number;
+  }>('/api/pdf-filler/approve-mapping', {
     method: 'POST',
     body: JSON.stringify(params),
   });

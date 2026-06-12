@@ -7,7 +7,8 @@ import {
   type PdfTemplateManifestEntry,
 } from '../../../../../shared/pdfFiller';
 import { deletePdfTemplate, fetchPdfTemplates, uploadPdfTemplate } from './services/api';
-import { fileToBase64 } from './form-intelligence/utils/pdfFile';
+import { PdfExtractionProgress } from './components/PdfExtractionProgress';
+import { usePdfExtractionProgress } from './hooks/usePdfExtractionProgress';
 
 type ToastFn = (message: string, type: 'success' | 'error' | 'info') => void;
 
@@ -16,6 +17,8 @@ interface PdfTemplatesPageProps {
 }
 
 export const PdfTemplatesPage: React.FC<PdfTemplatesPageProps> = ({ onToast }) => {
+  const { progress: extractionProgress, runWithFile: runUploadWithProgress } =
+    usePdfExtractionProgress('template_upload');
   const inputRef = useRef<HTMLInputElement>(null);
   const [templates, setTemplates] = useState<PdfTemplateManifestEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,13 +50,14 @@ export const PdfTemplatesPage: React.FC<PdfTemplatesPageProps> = ({ onToast }) =
     }
     setUploading(true);
     try {
-      const fileData = await fileToBase64(file);
-      const { template } = await uploadPdfTemplate({
-        fileName: file.name,
-        fileData,
-        documentType,
-        displayName: displayName.trim() || undefined,
-      });
+      const { template } = await runUploadWithProgress(file, (fileData) =>
+        uploadPdfTemplate({
+          fileName: file.name,
+          fileData,
+          documentType,
+          displayName: displayName.trim() || undefined,
+        })
+      );
       onToast?.(`Template "${template.displayName}" saved to Practice Admin/PDF Documents`, 'success');
       setDisplayName('');
       await refresh();
@@ -155,6 +159,16 @@ export const PdfTemplatesPage: React.FC<PdfTemplatesPageProps> = ({ onToast }) =
               </>
             )}
           </button>
+
+          {uploading && (
+            <PdfExtractionProgress
+              active={uploading}
+              fileName={extractionProgress.fileName}
+              phaseLabel="Analyzing and saving"
+              remainingLabel={extractionProgress.remainingLabel || 'Finishing up…'}
+              progressPercent={extractionProgress.progressPercent}
+            />
+          )}
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">

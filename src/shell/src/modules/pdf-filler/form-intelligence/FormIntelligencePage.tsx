@@ -1,14 +1,21 @@
 import React, { useCallback, useState } from 'react';
 import type { PdfDocumentType } from '../../../../../../shared/pdfFiller';
 import {
+  ApiError,
+  approvePdfMapping,
   extractPdfTemplateSchema,
   fetchPdfTemplates,
   fillPdfFormStream,
   publishPracticePdfTemplate,
 } from '../services/api';
+import {
+  buildPredictionJsonFromExtractSchema,
+  buildValidatedFieldsFromSchemas,
+} from '../../../../../../shared/mappingFeedback';
 import { downloadBlob } from './utils/downloadBlob';
 import { fileToBase64 } from './utils/pdfFile';
 import { useFormIntelligenceState } from './state/useFormIntelligenceState';
+import { usePdfExtractionProgress } from '../hooks/usePdfExtractionProgress';
 import { StudioSidebar } from './components/StudioSidebar';
 import { IntakeSidebar } from './components/IntakeSidebar';
 import { PdfStudioCanvas } from './components/PdfStudioCanvas';
@@ -29,6 +36,8 @@ function defaultDisplayNameFromFile(file: File): string {
 
 export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onToast }) => {
   const state = useFormIntelligenceState();
+  const { progress: extractionProgress, runWithFile: runExtractionWithProgress } =
+    usePdfExtractionProgress('extract_api');
   const [documentType, setDocumentType] = useState<PdfDocumentType>('insurance_form');
   const [displayName, setDisplayName] = useState('');
   const [practiceTemplateId, setPracticeTemplateId] = useState<string | undefined>();
@@ -80,9 +89,21 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
       state.setExtracting(true);
       state.setExtractError(null);
       try {
-        const fileData = await fileToBase64(file);
-        const result = await extractPdfTemplateSchema({ fileName: file.name, fileData });
-        state.applyExtractResult(result);
+        const result = await runExtractionWithProgress(file, (fileData) =>
+          extractPdfTemplateSchema({ fileName: file.name, fileData })
+        );
+        const extractionRunId = crypto.randomUUID();
+        const predictionJson = buildPredictionJsonFromExtractSchema(result.schema, {
+          sourceFilename: file.name,
+          extractionMethod: result.extractionMethod,
+          schemaVersion: result.schemaVersion,
+        });
+        predictionJson.pdf_sha256 = result.pdfSha256;
+        state.applyExtractResult({
+          ...result,
+          extractionRunId,
+          predictionJson,
+        });
         void syncPracticeTemplateMeta(result.pdfHash, file);
         const fieldCount = Object.keys(
           (result.schema.properties || {}) as Record<string, unknown>
@@ -105,13 +126,48 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
         state.setExtracting(false);
       }
     },
-    [onToast, state, syncPracticeTemplateMeta]
+    [onToast, runExtractionWithProgress, state, syncPracticeTemplateMeta]
   );
 
   const handleSaveTemplate = useCallback(async () => {
     if (!state.pdfHash || !state.schema || !state.uploadedFile) return;
     state.setSaving(true);
+    let mappingFieldCount: number | null = null;
     try {
+      if (
+        state.baselineSchema &&
+        state.predictionJson &&
+        state.extractionRunId &&
+        state.pdfSha256
+      ) {
+        const validated_fields = buildValidatedFieldsFromSchemas(
+          state.baselineSchema,
+          state.schema
+        );
+        if (validated_fields.length > 0) {
+          try {
+            const approval = await approvePdfMapping({
+              extraction_run_id: state.extractionRunId,
+              pdf_sha256: state.pdfSha256,
+              source_filename: state.uploadedFile.name,
+              prediction_json: state.predictionJson,
+              validated_fields,
+            });
+            mappingFieldCount = approval.field_count;
+            state.setExtractionRunId(crypto.randomUUID());
+          } catch (approveErr) {
+            const skip =
+              approveErr instanceof ApiError &&
+              (approveErr.status === 503 || approveErr.status === 409);
+            if (!skip) {
+              const msg =
+                approveErr instanceof Error ? approveErr.message : 'Approve mapping failed';
+              onToast?.(`Layout training record failed: ${msg}`, 'error');
+            }
+          }
+        }
+      }
+
       const fileData = await fileToBase64(state.uploadedFile);
       const result = await publishPracticePdfTemplate({
         fileName: state.uploadedFile.name,
@@ -126,8 +182,12 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
         baselineExtractionMethod: state.extractionMethod || undefined,
       });
       setPracticeTemplateId(result.template.templateId);
+      const trainingNote =
+        mappingFieldCount != null
+          ? ` Layout corrections (${mappingFieldCount} fields) recorded for training.`
+          : '';
       onToast?.(
-        `Form "${result.template.displayName}" saved to Practice Admin — available on patient Form Intelligence.`,
+        `Form "${result.template.displayName}" saved to Practice Admin — available on patient Form Intelligence.${trainingNote}`,
         'success'
       );
     } catch (e) {
@@ -231,6 +291,7 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
               <StudioSidebar
                 uploadedFile={state.uploadedFile}
                 extracting={state.extracting}
+                extractionProgress={extractionProgress}
                 extractError={state.extractError}
                 pdfHash={state.pdfHash}
                 cacheHit={state.cacheHit}

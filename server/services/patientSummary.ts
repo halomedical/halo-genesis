@@ -15,7 +15,13 @@ import {
   patientSummarySourcePrompt,
 } from '../utils/prompts';
 import { parseSessionsJson } from '../utils/scribeSessions';
+import {
+  appendFormDataToMarkdown,
+  formDataLinesFromRecord,
+} from '../utils/patientSummaryFormEnrich';
+import type { PdfSchemaFieldDescriptor } from '../utils/pdfSchemaUtils';
 import type {
+  PatientSummaryFormContribution,
   PatientSummaryProcessedSource,
   PatientSummaryState,
   PatientSummaryTimelineEntry,
@@ -26,6 +32,51 @@ const SUMMARY_MARKDOWN_FILE_NAME = 'patient-summary.md';
 const SUMMARY_STATE_FILE_NAME = 'halo_patient_summary_state.json';
 const SESSIONS_FILE_NAME = 'halo_scribe_sessions.json';
 const MAX_TIMELINE_ENTRIES = 80;
+const MAX_FORM_CONTRIBUTIONS = 40;
+
+function normalizeTimelineSourceType(raw: string): PatientSummaryTimelineEntry['sourceType'] {
+  if (raw === 'consultation') return 'consultation';
+  if (raw === 'form') return 'form';
+  return 'file';
+}
+
+function normalizeProcessedSourceType(raw: string): PatientSummaryProcessedSource['sourceType'] {
+  if (raw === 'consultation') return 'consultation';
+  if (raw === 'form') return 'form';
+  return 'file';
+}
+
+function normalizeFormContributions(raw: unknown): PatientSummaryFormContribution[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PatientSummaryFormContribution[] = [];
+  for (const item of raw) {
+    const row = item as Partial<PatientSummaryFormContribution>;
+    if (
+      !row ||
+      typeof row.at !== 'string' ||
+      typeof row.templateId !== 'string' ||
+      typeof row.templateName !== 'string' ||
+      !Array.isArray(row.lines)
+    ) {
+      continue;
+    }
+    const lines = row.lines
+      .map((line) => String(line || '').trim())
+      .filter(Boolean);
+    if (lines.length === 0) continue;
+    out.push({
+      at: row.at,
+      templateId: row.templateId,
+      templateName: row.templateName,
+      lines,
+    });
+  }
+  return out.slice(-MAX_FORM_CONTRIBUTIONS);
+}
+
+function contributionLineToBullet(line: string): string {
+  return line.replace(/^- \*\*/, '').replace(/\*\*: /, ': ');
+}
 
 type SummarySource = {
   sourceId: string;
@@ -59,6 +110,7 @@ function createEmptySummaryState(patientId: string, patientName: string): Patien
     snapshot: [],
     timeline: [],
     processedSources: {},
+    formContributions: [],
   };
 }
 
@@ -88,7 +140,7 @@ function normalizeSummaryState(
       timeline.push({
         id: item.id,
         sourceId: item.sourceId,
-        sourceType: item.sourceType === 'consultation' ? 'consultation' : 'file',
+        sourceType: normalizeTimelineSourceType(item.sourceType),
         title: item.title,
         dateLabel: typeof item.dateLabel === 'string' ? item.dateLabel : dateOnly(item.happenedAt),
         happenedAt: item.happenedAt,
@@ -112,7 +164,7 @@ function normalizeSummaryState(
       ) {
         processedSources[key] = {
           sourceId: item.sourceId,
-          sourceType: item.sourceType === 'consultation' ? 'consultation' : 'file',
+          sourceType: normalizeProcessedSourceType(item.sourceType),
           sourceName: item.sourceName,
           sourceUpdatedAt: item.sourceUpdatedAt,
           processedAt: item.processedAt,
@@ -130,6 +182,7 @@ function normalizeSummaryState(
     snapshot: normalizeBulletList(obj.snapshot, 5),
     timeline,
     processedSources,
+    formContributions: normalizeFormContributions(obj.formContributions),
   };
 }
 
@@ -158,6 +211,21 @@ function buildPatientSummaryMarkdown(state: PatientSummaryState): string {
     }
   } else {
     lines.push('- No recorded updates yet.', '');
+  }
+
+  lines.push('', '## Form contributions', '');
+
+  const contributions = state.formContributions ?? [];
+  if (contributions.length > 0) {
+    for (const block of contributions) {
+      lines.push(`### ${block.templateName} (${dateOnly(block.at)})`, '');
+      for (const line of block.lines) {
+        lines.push(line.startsWith('-') ? line : `- ${line}`);
+      }
+      lines.push('');
+    }
+  } else {
+    lines.push('- None yet.', '');
   }
 
   return `${lines.join('\n').trim()}\n`;
@@ -454,6 +522,77 @@ export async function refreshPatientSummaryInBackground(
   } catch (err) {
     console.error(`[summary] Background refresh failed for ${patientId}:`, err);
   }
+}
+
+/** Merge human PDF form deltas into summary state, snapshot, and markdown. */
+export async function enrichPatientSummaryFromFormSubmission(
+  token: string,
+  patientId: string,
+  params: {
+    templateId: string;
+    templateDisplayName: string;
+    newlyAddedData: Record<string, unknown>;
+    schemaFields: PdfSchemaFieldDescriptor[];
+  }
+): Promise<{ state: PatientSummaryState; markdown: string; fieldsWritten: number }> {
+  const lines = formDataLinesFromRecord(params.newlyAddedData, params.schemaFields);
+  if (lines.length === 0) {
+    const baseline = await ensurePatientSummaryUpToDate(token, patientId);
+    return { state: baseline.state, markdown: baseline.markdown, fieldsWritten: 0 };
+  }
+
+  const patientName = await resolvePatientName(token, patientId);
+  const { state: syncedState } = await ensurePatientSummaryUpToDate(token, patientId);
+  const state: PatientSummaryState = { ...syncedState, patientName };
+
+  const now = new Date().toISOString();
+  const sourceId = `form:${params.templateId}:${now}`;
+
+  state.formContributions = [
+    ...(state.formContributions ?? []),
+    {
+      at: now,
+      templateId: params.templateId,
+      templateName: params.templateDisplayName,
+      lines,
+    },
+  ].slice(-MAX_FORM_CONTRIBUTIONS);
+
+  const timelineEntry: PatientSummaryTimelineEntry = {
+    id: sourceId,
+    sourceId,
+    sourceType: 'form',
+    title: `Form: ${params.templateDisplayName}`,
+    dateLabel: dateOnly(now),
+    happenedAt: now,
+    bullets: lines.map(contributionLineToBullet).slice(0, 3),
+    sourceName: params.templateDisplayName,
+  };
+
+  state.timeline = upsertTimelineEntry(state.timeline, timelineEntry);
+  state.snapshot = await mergeSnapshot(patientName, state, timelineEntry);
+  state.processedSources[sourceId] = {
+    sourceId,
+    sourceType: 'form',
+    sourceName: params.templateDisplayName,
+    sourceUpdatedAt: now,
+    processedAt: now,
+  };
+  state.lastUpdatedAt = now;
+  state.dirty = false;
+
+  let markdown = buildPatientSummaryMarkdown(state);
+  markdown = appendFormDataToMarkdown(markdown, params.newlyAddedData, params.schemaFields, {
+    templateName: params.templateDisplayName,
+    savedAt: now,
+  });
+
+  await Promise.all([
+    saveSummaryState(token, patientId, state),
+    upsertTextFileInFolder(token, patientId, SUMMARY_MARKDOWN_FILE_NAME, markdown, 'text/markdown'),
+  ]);
+
+  return { state, markdown, fieldsWritten: lines.length };
 }
 
 /** Overwrite patient-summary.md with the given markdown (e.g. after form enrichment). */

@@ -237,10 +237,17 @@ export interface ScribeSession {
   mainComplaint?: string;
 }
 
+export interface PatientSummaryFormContribution {
+  at: string;
+  templateId: string;
+  templateName: string;
+  lines: string[];
+}
+
 export interface PatientSummaryTimelineEntry {
   id: string;
   sourceId: string;
-  sourceType: 'file' | 'consultation';
+  sourceType: 'file' | 'consultation' | 'form';
   title: string;
   dateLabel: string;
   happenedAt: string;
@@ -250,7 +257,7 @@ export interface PatientSummaryTimelineEntry {
 
 export interface PatientSummaryProcessedSource {
   sourceId: string;
-  sourceType: 'file' | 'consultation';
+  sourceType: 'file' | 'consultation' | 'form';
   sourceName: string;
   sourceUpdatedAt: string;
   processedAt: string;
@@ -265,6 +272,7 @@ export interface PatientSummaryState {
   snapshot: string[];
   timeline: PatientSummaryTimelineEntry[];
   processedSources: Record<string, PatientSummaryProcessedSource>;
+  formContributions?: PatientSummaryFormContribution[];
 }
 
 export interface AdmissionsTask {

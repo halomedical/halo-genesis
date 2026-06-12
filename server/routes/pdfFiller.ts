@@ -11,6 +11,7 @@ import {
 import {
   handleExtractionRequest,
   handleFillRequest,
+  handleApproveMapping,
   handlePublishPracticeTemplate,
   handleSaveTemplate,
 } from '../controllers/pdfFillerController';
@@ -24,11 +25,15 @@ import {
 } from '../services/pdfFillerClient';
 import {
   ensurePatientSummaryUpToDate,
-  persistPatientSummaryMarkdown,
+  enrichPatientSummaryFromFormSubmission,
 } from '../services/patientSummary';
-import { appendFormDataToMarkdown } from '../utils/patientSummaryFormEnrich';
 import { schemaPropertiesToFields } from '../utils/pdfSchemaUtils';
 import { savePracticePdfTemplate } from '../services/practicePdfTemplateStore';
+import {
+  getEstimatedExtractionDurationMs,
+  insertPdfExtractionTelemetry,
+  type PdfExtractionFlow,
+} from '../services/pdfExtractionTelemetryStore';
 import {
   findTemplateEntry,
   loadPdfTemplatesManifest,
@@ -51,7 +56,37 @@ function safeBaseName(fileName: string): string {
   return base.replace(/[^\w\s.-]/g, '_').slice(0, 120);
 }
 
+router.get('/extract/estimate', async (req: Request, res: Response) => {
+  try {
+    const fileSizeRaw = Number(req.query.fileSizeBytes);
+    const flowRaw = String(req.query.flow || 'extract_api');
+
+    if (!Number.isFinite(fileSizeRaw) || fileSizeRaw <= 0) {
+      res.status(400).json({ error: 'fileSizeBytes must be a positive number.' });
+      return;
+    }
+    if (fileSizeRaw > MAX_FILE_SIZE_BYTES) {
+      res.status(400).json({ error: `fileSizeBytes exceeds ${MAX_FILE_SIZE_MB}MB limit.` });
+      return;
+    }
+    if (flowRaw !== 'extract_api' && flowRaw !== 'template_upload') {
+      res.status(400).json({ error: 'flow must be extract_api or template_upload.' });
+      return;
+    }
+
+    const estimate = await getEstimatedExtractionDurationMs({
+      fileSizeBytes: Math.round(fileSizeRaw),
+      flow: flowRaw as PdfExtractionFlow,
+    });
+    res.json(estimate);
+  } catch (err) {
+    console.error('[pdf-filler] extract estimate:', err);
+    res.status(500).json({ error: 'Failed to compute extraction estimate.' });
+  }
+});
+
 router.post('/extract', (req, res) => void handleExtractionRequest(req, res));
+router.post('/approve-mapping', (req, res) => void handleApproveMapping(req, res));
 router.post('/schema/global', (req, res) => void handleSaveTemplate(req, res));
 router.post('/templates/publish', (req, res) => void handlePublishPracticeTemplate(req, res));
 router.post('/fill', (req, res) => void handleFillRequest(req, res));
@@ -118,6 +153,12 @@ router.get('/templates/:templateId/pdf', async (req: Request, res: Response) => 
 });
 
 router.post('/templates', async (req: Request, res: Response) => {
+  const startedAt = performance.now();
+  let fileSizeBytes = 0;
+  let pdfHash: string | null = null;
+  let extractionMethod: string | null = null;
+  let success = false;
+
   try {
     const token = req.session.accessToken!;
     const fileName = sanitizeString(req.body.fileName, 255);
@@ -145,14 +186,14 @@ router.post('/templates', async (req: Request, res: Response) => {
     }
 
     const pdfBuffer = Buffer.from(fileData, 'base64');
+    fileSizeBytes = pdfBuffer.length;
     const stem = safeBaseName(fileName);
     const displayName = displayNameInput || stem;
     const documentType = documentTypeRaw as PdfDocumentType;
-    const pdfHash = md5HexPdf(pdfBuffer);
+    pdfHash = md5HexPdf(pdfBuffer);
 
     const schema = await extractSchemaFromPdf(pdfBuffer, fileName);
-    const extractionMethod = String(schema['x-extraction-method'] || 'unknown');
-    const schemaVersion = Number(schema['x-schema-build-version'] || 0);
+    extractionMethod = String(schema['x-extraction-method'] || 'unknown');
 
     const entry = await savePracticePdfTemplate({
       token,
@@ -164,6 +205,7 @@ router.post('/templates', async (req: Request, res: Response) => {
       displayName,
     });
 
+    success = true;
     res.json({ template: entry });
   } catch (err) {
     console.error('[pdf-filler] upload template:', err);
@@ -173,6 +215,18 @@ router.post('/templates', async (req: Request, res: Response) => {
       return;
     }
     res.status(500).json({ error: 'Failed to save PDF template.', detail: message });
+  } finally {
+    if (fileSizeBytes > 0) {
+      void insertPdfExtractionTelemetry({
+        pdf_hash: pdfHash,
+        file_size_bytes: fileSizeBytes,
+        duration_ms: performance.now() - startedAt,
+        cache_hit: false,
+        extraction_method: extractionMethod,
+        flow: 'template_upload',
+        success,
+      });
+    }
   }
 });
 
@@ -330,16 +384,15 @@ router.post('/patients/:patientId/fill', async (req: Request, res: Response) => 
       typeof newlyAddedData === 'object' &&
       Object.keys(newlyAddedData).length > 0;
 
+    let summaryFieldsUpdated = 0;
     if (hasNewData) {
-      const { markdown } = await ensurePatientSummaryUpToDate(token, patientFolderId);
-      const enrichedMarkdown = appendFormDataToMarkdown(
-        markdown,
+      const enrichResult = await enrichPatientSummaryFromFormSubmission(token, patientFolderId, {
+        templateId,
+        templateDisplayName: entry.displayName,
         newlyAddedData,
-        schemaFields
-      );
-      if (enrichedMarkdown !== markdown) {
-        await persistPatientSummaryMarkdown(token, patientFolderId, enrichedMarkdown);
-      }
+        schemaFields,
+      });
+      summaryFieldsUpdated = enrichResult.fieldsWritten;
     }
 
     const filledPdf = await fillPdfViaSidecar(pdfBuffer, schema, answers);
@@ -361,6 +414,7 @@ router.post('/patients/:patientId/fill', async (req: Request, res: Response) => 
       name: outName,
       subfolder: subfolderName,
       templateId,
+      summaryFieldsUpdated,
     });
   } catch (err) {
     console.error('[pdf-filler] fill:', err);

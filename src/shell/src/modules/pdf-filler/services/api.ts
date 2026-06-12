@@ -1,4 +1,5 @@
 export {
+  ApiError,
   fetchPdfTemplates,
   fetchPdfTemplateSchema,
   uploadPdfTemplate,
@@ -6,7 +7,10 @@ export {
   autofillPatientPdfForm,
   fillPatientPdfForm,
   extractPdfTemplateSchema,
+  approvePdfMapping,
+  fetchPdfExtractionEstimate,
   publishPracticePdfTemplate,
   saveGlobalPdfTemplateSchema,
   fillPdfFormStream,
+  type PdfExtractionFlow,
 } from '../../../services/api';

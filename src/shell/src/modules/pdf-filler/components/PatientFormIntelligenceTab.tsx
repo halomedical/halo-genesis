@@ -24,7 +24,7 @@ import {
 import { initialFormDataFromSchema } from '../form-intelligence/utils/schemaLayout';
 import { SchemaFormFields } from './SchemaFormFields';
 import {
-  findManuallyTypedFields,
+  mergeHumanFieldDeltas,
   mergePatientIntoFormValues,
 } from './patientFormPrefill';
 
@@ -52,6 +52,9 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
   const [loadingSchema, setLoadingSchema] = useState(false);
   const [saving, setSaving] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
+  const [initialBaseline, setInitialBaseline] = useState<Record<string, string | boolean> | null>(
+    null
+  );
   const [autofillBaseline, setAutofillBaseline] = useState<Record<
     string,
     string | null
@@ -99,6 +102,7 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
     setSchema(null);
     setSelectedTemplate(null);
     setValues({});
+    setInitialBaseline(null);
     setAutofillBaseline(null);
   };
 
@@ -123,7 +127,10 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
       setSelectedTemplate(template);
       setSchema(loaded);
       const base = initialFormDataFromSchema(loaded);
-      setValues(mergePatientIntoFormValues(loaded, base, patient));
+      const merged = mergePatientIntoFormValues(loaded, base, patient);
+      setValues(merged);
+      setInitialBaseline({ ...merged });
+      setAutofillBaseline(null);
       setStep('questions');
     } catch (e) {
       onToast?.(e instanceof Error ? e.message : 'Failed to load form questions', 'error');
@@ -175,14 +182,18 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
     setSaving(true);
     try {
       const answers: Record<string, unknown> = { ...values };
-      const newlyAddedData = findManuallyTypedFields(autofillBaseline, values);
+      const newlyAddedData = mergeHumanFieldDeltas(initialBaseline, autofillBaseline, values);
       const result = await fillPatientPdfForm(patient.id, {
         templateId: selectedId,
         answers,
         newlyAddedData:
           Object.keys(newlyAddedData).length > 0 ? newlyAddedData : undefined,
       });
-      onToast?.(`Saved "${result.name}" to ${result.subfolder}`, 'success');
+      const summaryNote =
+        result.summaryFieldsUpdated && result.summaryFieldsUpdated > 0
+          ? ` Patient summary updated with ${result.summaryFieldsUpdated} field${result.summaryFieldsUpdated === 1 ? '' : 's'}.`
+          : '';
+      onToast?.(`Saved "${result.name}" to ${result.subfolder}.${summaryNote}`, 'success');
     } catch (e) {
       onToast?.(e instanceof Error ? e.message : 'Failed to save document', 'error');
     } finally {
@@ -305,15 +316,37 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
       ) : step === 'questions' && schema && selectedTemplate ? (
         <div className="flex flex-1 min-h-0 flex-col rounded-xl border border-slate-200 bg-white">
           <div className="shrink-0 border-b border-slate-100 px-5 py-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-600">
-              {PDF_DOCUMENT_TYPE_LABELS[selectedTemplate.documentType]}
-            </p>
-            <h3 className="text-lg font-semibold text-slate-900 mt-0.5">{selectedTemplate.displayName}</h3>
-            {filingSubfolder && (
-              <p className="text-xs text-slate-500 mt-1">
-                Saving generates a PDF in patient folder → <span className="font-medium">{filingSubfolder}</span>
-              </p>
-            )}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-600">
+                  {PDF_DOCUMENT_TYPE_LABELS[selectedTemplate.documentType]}
+                </p>
+                <h3 className="text-lg font-semibold text-slate-900 mt-0.5">{selectedTemplate.displayName}</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Uses <span className="font-medium text-slate-600">patient-summary.md</span> in this
+                  patient&apos;s Drive folder; saving adds your corrections back.
+                </p>
+                {filingSubfolder && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Saving generates a PDF in patient folder →{' '}
+                    <span className="font-medium">{filingSubfolder}</span>
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                disabled={autofilling || saving}
+                onClick={() => void handleAutofill()}
+                className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-cyan-200 bg-white px-4 py-2.5 text-sm font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-60"
+              >
+                {autofilling ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                Autofill from summary
+              </button>
+            </div>
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
             <SchemaFormFields
@@ -324,19 +357,6 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
             />
           </div>
           <div className="shrink-0 border-t border-slate-100 px-5 py-4 bg-slate-50/80 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              disabled={autofilling || saving}
-              onClick={() => void handleAutofill()}
-              className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-white px-5 py-2.5 text-sm font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-60"
-            >
-              {autofilling ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              Autofill from summary
-            </button>
             <button
               type="button"
               disabled={saving || autofilling}

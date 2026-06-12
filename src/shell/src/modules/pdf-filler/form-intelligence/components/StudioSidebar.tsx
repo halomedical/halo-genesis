@@ -9,6 +9,8 @@ import {
   type LayoutField,
 } from '../utils/schemaLayout';
 import type { StudioCanvasMode } from '../state/useFormIntelligenceState';
+import { PdfExtractionProgress } from '../../components/PdfExtractionProgress';
+import type { PdfExtractionProgressState } from '../../hooks/usePdfExtractionProgress';
 import {
   PDF_DOCUMENT_TYPES,
   PDF_DOCUMENT_TYPE_LABELS,
@@ -18,6 +20,7 @@ import {
 interface StudioSidebarProps {
   uploadedFile: File | null;
   extracting: boolean;
+  extractionProgress: PdfExtractionProgressState;
   extractError: string | null;
   pdfHash: string;
   cacheHit: boolean | null;
@@ -53,6 +56,7 @@ interface StudioSidebarProps {
 export const StudioSidebar: React.FC<StudioSidebarProps> = ({
   uploadedFile,
   extracting,
+  extractionProgress,
   extractError,
   pdfHash,
   cacheHit,
@@ -175,11 +179,13 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
       )}
 
       {extracting && (
-        <div className="space-y-2 animate-pulse">
-          <div className="h-3 bg-slate-200 rounded w-3/4" />
-          <div className="h-3 bg-slate-200 rounded w-1/2" />
-          <div className="h-20 bg-slate-100 rounded" />
-        </div>
+        <PdfExtractionProgress
+          active={extracting}
+          fileName={extractionProgress.fileName}
+          phaseLabel="Analyzing PDF"
+          remainingLabel={extractionProgress.remainingLabel || 'Finishing up…'}
+          progressPercent={extractionProgress.progressPercent}
+        />
       )}
 
       {uploadedFile && !extracting && pdfHash && fields.length === 0 && (
@@ -303,6 +309,10 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           Save to practice library
         </button>
+        <p className="text-[11px] text-slate-400 px-1">
+          Also records layout corrections for model training when extraction metadata is available
+          (coordinates only).
+        </p>
       </div>
     </div>
   );
