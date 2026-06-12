@@ -749,9 +749,9 @@ export const SettingsModal: React.FC<Props> = ({
               <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-sm font-semibold text-slate-800">PDF Filler</p>
+                    <p className="text-sm font-semibold text-slate-800">Form Intelligence</p>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Upload practice PDF templates and complete forms in Halo UI with filled PDFs filed to patient folders.
+                      Practice PDF templates, fill forms on the document in Halo, and save filled PDFs to patient folders.
                     </p>
                   </div>
                   <button

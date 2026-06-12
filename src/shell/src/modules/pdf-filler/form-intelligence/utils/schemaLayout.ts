@@ -96,6 +96,26 @@ export function layoutFieldsFromSchema(schema: Record<string, unknown> | null): 
   return fields.sort((a, b) => a.page - b.page || a.y - b.y || a.x - b.x);
 }
 
+/** Schema property keys that have no numeric layout on the PDF (questionnaire-only). */
+export function schemaKeysWithoutLayout(schema: Record<string, unknown> | null): string[] {
+  if (!schema) return [];
+  const properties = (schema.properties || {}) as Record<string, JsonSchemaProperty>;
+  const placed = new Set(layoutFieldsFromSchema(schema).map((f) => f.key));
+  return Object.keys(properties).filter((k) => !placed.has(k));
+}
+
+export function subsetSchemaForKeys(
+  schema: Record<string, unknown>,
+  keys: string[]
+): Record<string, unknown> {
+  const properties = (schema.properties || {}) as Record<string, JsonSchemaProperty>;
+  const subset: Record<string, JsonSchemaProperty> = {};
+  for (const key of keys) {
+    if (properties[key]) subset[key] = properties[key];
+  }
+  return { ...schema, properties: subset };
+}
+
 export function fieldsOnPage(fields: LayoutField[], page: number): LayoutField[] {
   return fields.filter((f) => f.page === page);
 }

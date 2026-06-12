@@ -84,6 +84,10 @@ app.use(session({
   },
 }));
 
+if (!config.isProduction) {
+  app.use('/test-fixtures', express.static(path.join(process.cwd(), 'test-data')));
+}
+
 // --- ROUTES ---
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/drive', driveRoutes);

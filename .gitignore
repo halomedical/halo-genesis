@@ -1,5 +1,8 @@
 node_modules/
 server/dist/
 .env
+test-data/pdf-autofill-cl07/.google-refresh-token
+test-data/pdf-autofill-cl07/.auth-profile/
+test-data/.dev-google-tokens.json
 src/shell/node_modules/
 src/shell/dist/

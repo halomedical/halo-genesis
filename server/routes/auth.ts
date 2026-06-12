@@ -1,6 +1,40 @@
+import fs from 'fs';
+import path from 'path';
 import { Router, Request, Response } from 'express';
 import { config } from '../config';
 import { getHaloRootFolder } from '../services/drive';
+
+const DEV_GOOGLE_TOKENS_FILE = path.join(
+  process.cwd(),
+  'test-data/.dev-google-tokens.json'
+);
+
+function cacheDevGoogleTokens(tokens: {
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+}): void {
+  if (config.isProduction) return;
+  try {
+    fs.mkdirSync(path.dirname(DEV_GOOGLE_TOKENS_FILE), { recursive: true });
+    fs.writeFileSync(
+      DEV_GOOGLE_TOKENS_FILE,
+      JSON.stringify(
+        {
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token ?? null,
+          expires_at: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+          cached_at: new Date().toISOString(),
+        },
+        null,
+        2
+      ),
+      { mode: 0o600 }
+    );
+  } catch (err) {
+    console.warn('[auth] Failed to cache dev Google tokens:', err);
+  }
+}
 
 const router = Router();
 
@@ -89,6 +123,11 @@ router.get('/callback', async (req: Request, res: Response) => {
       req.session.refreshToken = tokens.refresh_token;
     }
     req.session.tokenExpiry = Date.now() + (tokens.expires_in ?? 3600) * 1000;
+    cacheDevGoogleTokens({
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_in: tokens.expires_in,
+    });
 
     // Fetch user info
     const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {

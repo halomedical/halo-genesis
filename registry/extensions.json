@@ -40,8 +40,8 @@
   },
   {
     "id": "pdf-filler-v1",
-    "display_name": "PDF Filler",
-    "description": "Practice PDF form templates, Halo UI questionnaires, and filled PDF output to patient folders",
+    "display_name": "Form Intelligence",
+    "description": "Practice PDF form templates, in-document form filling, and filled PDF output to patient folders",
     "specialty_tags": ["all"],
     "required_endpoints": ["pdf-filler-service", "drive-adapter"],
     "required_config_keys": ["features.pdf_filler"],

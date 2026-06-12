@@ -1,0 +1,20 @@
+{
+  "patients": [
+    {
+      "name": "Margaret Thandi Ndlovu",
+      "dob": "1987-03-14",
+      "sex": "F",
+      "medicalAid": "Discovery Health",
+      "medicalAidPlan": "Classic Comprehensive",
+      "medicalAidNumber": "4829103756",
+      "memberNumber": "4829103756",
+      "dependantCode": "00",
+      "idNumber": "8703140583087",
+      "schemeCode": "DISC",
+      "planCode": "CCOMP",
+      "initials": "MT",
+      "statusIndicator": "A",
+      "folderNumber": "CL07-TEST-001"
+    }
+  ]
+}

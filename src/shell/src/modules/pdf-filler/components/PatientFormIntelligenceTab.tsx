@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Brain,
+  ChevronDown,
   ChevronRight,
   FileText,
   Loader2,
@@ -19,9 +20,16 @@ import {
   autofillPatientPdfForm,
   fetchPdfTemplates,
   fetchPdfTemplateSchema,
+  fetchPdfTemplatePdf,
   fillPatientPdfForm,
 } from '../services/api';
-import { initialFormDataFromSchema } from '../form-intelligence/utils/schemaLayout';
+import {
+  initialFormDataFromSchema,
+  schemaKeysWithoutLayout,
+  subsetSchemaForKeys,
+} from '../form-intelligence/utils/schemaLayout';
+import { PdfPageFooter } from '../form-intelligence/components/PdfPageFooter';
+import { PdfOverlayFillCanvas } from './PdfOverlayFillCanvas';
 import { SchemaFormFields } from './SchemaFormFields';
 import {
   mergeHumanFieldDeltas,
@@ -30,7 +38,7 @@ import {
 
 type ToastFn = (message: string, type: 'success' | 'error' | 'info') => void;
 
-type Step = 'type' | 'form' | 'questions';
+type Step = 'type' | 'form' | 'fill';
 
 interface PatientFormIntelligenceTabProps {
   patient: Patient;
@@ -48,8 +56,9 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<PdfTemplateManifestEntry | null>(null);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [values, setValues] = useState<Record<string, string | boolean>>({});
-  const [loadingSchema, setLoadingSchema] = useState(false);
+  const [loadingForm, setLoadingForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
   const [initialBaseline, setInitialBaseline] = useState<Record<string, string | boolean> | null>(
@@ -59,6 +68,9 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
     string,
     string | null
   > | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [numPages, setNumPages] = useState(0);
+  const [unplacedOpen, setUnplacedOpen] = useState(false);
 
   const loadTemplates = useCallback(async () => {
     setLoadingList(true);
@@ -97,46 +109,70 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
     [selectedType, templatesByType]
   );
 
-  const resetQuestionnaire = () => {
+  const unplacedKeys = useMemo(
+    () => (schema ? schemaKeysWithoutLayout(schema) : []),
+    [schema]
+  );
+
+  const unplacedSchema = useMemo(() => {
+    if (!schema || unplacedKeys.length === 0) return null;
+    return subsetSchemaForKeys(schema, unplacedKeys);
+  }, [schema, unplacedKeys]);
+
+  const resetFillState = () => {
     setSelectedId(null);
     setSchema(null);
     setSelectedTemplate(null);
+    setPdfFile(null);
     setValues({});
     setInitialBaseline(null);
     setAutofillBaseline(null);
+    setCurrentPage(1);
+    setNumPages(0);
+    setUnplacedOpen(false);
   };
 
   const goToTypeStep = () => {
     setStep('type');
     setSelectedType(null);
-    resetQuestionnaire();
+    resetFillState();
   };
 
   const pickType = (documentType: PdfDocumentType) => {
     setSelectedType(documentType);
-    resetQuestionnaire();
+    resetFillState();
     setStep('form');
   };
 
   const pickForm = async (templateId: string) => {
     setSelectedId(templateId);
-    setLoadingSchema(true);
+    setLoadingForm(true);
     setSchema(null);
+    setPdfFile(null);
     try {
-      const { template, schema: loaded } = await fetchPdfTemplateSchema(templateId);
+      const [{ template, schema: loaded }, pdfBlob] = await Promise.all([
+        fetchPdfTemplateSchema(templateId),
+        fetchPdfTemplatePdf(templateId),
+      ]);
       setSelectedTemplate(template);
       setSchema(loaded);
+      const safeName = template.displayName.replace(/[^\w\s.-]+/g, '_').trim() || 'form';
+      setPdfFile(new File([pdfBlob], `${safeName}.pdf`, { type: 'application/pdf' }));
       const base = initialFormDataFromSchema(loaded);
       const merged = mergePatientIntoFormValues(loaded, base, patient);
       setValues(merged);
       setInitialBaseline({ ...merged });
       setAutofillBaseline(null);
-      setStep('questions');
+      setCurrentPage(1);
+      setNumPages(0);
+      const unplaced = schemaKeysWithoutLayout(loaded);
+      setUnplacedOpen(unplaced.length > 0);
+      setStep('fill');
     } catch (e) {
-      onToast?.(e instanceof Error ? e.message : 'Failed to load form questions', 'error');
+      onToast?.(e instanceof Error ? e.message : 'Failed to load form', 'error');
       setSelectedId(null);
     } finally {
-      setLoadingSchema(false);
+      setLoadingForm(false);
     }
   };
 
@@ -208,8 +244,8 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
       : null;
 
   return (
-    <div className="flex flex-col gap-5 h-full min-h-[420px]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex flex-col gap-5 h-full min-h-0">
+      <div className="flex flex-wrap items-start justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600">
             <Brain className="h-5 w-5" />
@@ -217,7 +253,7 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Form Intelligence</h2>
             <p className="text-sm text-slate-500">
-              Answer questions in Halo — we generate the PDF into{' '}
+              Fill in the form on the document — we save the PDF to{' '}
               <span className="font-medium text-slate-700">{patient.name}</span>&apos;s folder.
             </p>
           </div>
@@ -226,9 +262,9 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
           <button
             type="button"
             onClick={() => {
-              if (step === 'questions') {
+              if (step === 'fill') {
                 setStep('form');
-                resetQuestionnaire();
+                resetFillState();
               } else {
                 goToTypeStep();
               }
@@ -293,7 +329,7 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
               <li key={t.templateId}>
                 <button
                   type="button"
-                  disabled={loadingSchema && selectedId === t.templateId}
+                  disabled={loadingForm && selectedId === t.templateId}
                   onClick={() => void pickForm(t.templateId)}
                   className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50 disabled:opacity-60"
                 >
@@ -303,7 +339,7 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
                       Updated {new Date(t.updatedAt).toLocaleDateString()}
                     </div>
                   </div>
-                  {loadingSchema && selectedId === t.templateId ? (
+                  {loadingForm && selectedId === t.templateId ? (
                     <Loader2 className="h-5 w-5 shrink-0 animate-spin text-cyan-600" />
                   ) : (
                     <ChevronRight className="h-5 w-5 shrink-0 text-slate-300" />
@@ -313,8 +349,8 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
             ))}
           </ul>
         </div>
-      ) : step === 'questions' && schema && selectedTemplate ? (
-        <div className="flex flex-1 min-h-0 flex-col rounded-xl border border-slate-200 bg-white">
+      ) : step === 'fill' && schema && selectedTemplate ? (
+        <div className="flex flex-1 min-h-0 flex-col rounded-xl border border-slate-200 bg-white overflow-hidden">
           <div className="shrink-0 border-b border-slate-100 px-5 py-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
@@ -333,40 +369,84 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
                   </p>
                 )}
               </div>
-              <button
-                type="button"
-                disabled={autofilling || saving}
-                onClick={() => void handleAutofill()}
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-cyan-200 bg-white px-4 py-2.5 text-sm font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-60"
-              >
-                {autofilling ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Sparkles className="h-4 w-4" />
-                )}
-                Autofill from summary
-              </button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={autofilling || saving || loadingForm}
+                  onClick={() => void handleAutofill()}
+                  className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-white px-4 py-2.5 text-sm font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-60"
+                >
+                  {autofilling ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  Autofill from summary
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || autofilling || loadingForm}
+                  onClick={() => void handleSave()}
+                  className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-60"
+                >
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Save to patient folder
+                </button>
+              </div>
             </div>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
-            <SchemaFormFields
-              schema={schema}
-              values={values}
-              onChange={(key, value) => setValues((prev) => ({ ...prev, [key]: value }))}
-              scrollClassName="max-h-none overflow-visible pr-0"
-            />
-          </div>
-          <div className="shrink-0 border-t border-slate-100 px-5 py-4 bg-slate-50/80 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              disabled={saving || autofilling}
-              onClick={() => void handleSave()}
-              className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-60"
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save to patient folder
-            </button>
-          </div>
+
+          {loadingForm ? (
+            <div className="flex flex-1 items-center justify-center gap-2 text-sm text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin text-cyan-600" />
+              Loading form preview…
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-1 min-h-0 flex-col">
+                <PdfOverlayFillCanvas
+                  pdfFile={pdfFile}
+                  schema={schema}
+                  values={values}
+                  currentPage={currentPage}
+                  onDocumentLoad={setNumPages}
+                  onChange={(key, value) => setValues((prev) => ({ ...prev, [key]: value }))}
+                />
+                <PdfPageFooter
+                  currentPage={currentPage}
+                  numPages={numPages}
+                  onPageChange={setCurrentPage}
+                />
+              </div>
+
+              {unplacedSchema && unplacedKeys.length > 0 && (
+                <div className="shrink-0 border-t border-slate-100 bg-slate-50/80">
+                  <button
+                    type="button"
+                    onClick={() => setUnplacedOpen((o) => !o)}
+                    className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-100/80"
+                  >
+                    <span>
+                      Additional fields not shown on preview ({unplacedKeys.length})
+                    </span>
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-slate-400 transition ${unplacedOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {unplacedOpen && (
+                    <div className="max-h-48 overflow-y-auto border-t border-slate-100 px-5 py-4">
+                      <SchemaFormFields
+                        schema={unplacedSchema}
+                        values={values}
+                        onChange={(key, value) => setValues((prev) => ({ ...prev, [key]: value }))}
+                        scrollClassName="max-h-none overflow-visible pr-0"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       ) : null}
     </div>

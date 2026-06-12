@@ -2,6 +2,7 @@ export {
   ApiError,
   fetchPdfTemplates,
   fetchPdfTemplateSchema,
+  fetchPdfTemplatePdf,
   uploadPdfTemplate,
   deletePdfTemplate,
   autofillPatientPdfForm,

@@ -1,5 +1,42 @@
+import fs from 'fs';
+import path from 'path';
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
+
+const DEV_GOOGLE_TOKENS_FILE = path.join(
+  process.cwd(),
+  'test-data/.dev-google-tokens.json'
+);
+
+function cacheDevGoogleTokens(accessToken: string, refreshToken: string | undefined, expiresIn: number): void {
+  if (config.isProduction) return;
+  try {
+    fs.mkdirSync(path.dirname(DEV_GOOGLE_TOKENS_FILE), { recursive: true });
+    let existingRefresh: string | null = null;
+    if (fs.existsSync(DEV_GOOGLE_TOKENS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(DEV_GOOGLE_TOKENS_FILE, 'utf8')) as {
+        refresh_token?: string | null;
+      };
+      existingRefresh = raw.refresh_token ?? null;
+    }
+    fs.writeFileSync(
+      DEV_GOOGLE_TOKENS_FILE,
+      JSON.stringify(
+        {
+          access_token: accessToken,
+          refresh_token: refreshToken ?? existingRefresh,
+          expires_at: Date.now() + expiresIn * 1000,
+          cached_at: new Date().toISOString(),
+        },
+        null,
+        2
+      ),
+      { mode: 0o600 }
+    );
+  } catch {
+    // non-fatal
+  }
+}
 
 // Extend express-session to include our custom fields
 declare module 'express-session' {
@@ -47,6 +84,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 
         req.session.accessToken = tokens.access_token;
         req.session.tokenExpiry = Date.now() + (tokens.expires_in ?? 3600) * 1000;
+        cacheDevGoogleTokens(tokens.access_token, req.session.refreshToken, tokens.expires_in ?? 3600);
       } catch {
         req.session.destroy(() => {});
         res.status(401).json({ error: 'Failed to refresh session. Please sign in again.' });

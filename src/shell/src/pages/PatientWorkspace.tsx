@@ -1586,6 +1586,8 @@ export const PatientWorkspace: React.FC<Props> = ({
             ? 'overflow-hidden bg-[linear-gradient(180deg,#fbfdff_0%,#f5fbfe_100%)] px-0 py-0'
             : activeTab === 'notes'
               ? 'overflow-hidden bg-[linear-gradient(180deg,#fbfdff_0%,#f5f9fc_100%)] px-4 py-4 md:px-6 md:py-5'
+            : activeTab === 'form-intelligence'
+              ? 'overflow-hidden bg-slate-50/50 px-4 py-4 md:px-6 md:py-5'
             : 'overflow-y-auto bg-slate-50/50 px-4 py-4 md:px-6 md:py-5'
         }`}
       >
@@ -1595,6 +1597,8 @@ export const PatientWorkspace: React.FC<Props> = ({
               ? 'h-full'
               : activeTab === 'notes'
                 ? 'mx-auto h-full max-w-[1480px]'
+                : activeTab === 'form-intelligence'
+                  ? 'mx-auto h-full max-w-6xl flex flex-col min-h-0'
                 : 'mx-auto max-w-6xl'
           }
         >

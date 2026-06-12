@@ -1027,6 +1027,22 @@ export const fetchPdfTemplateSchema = (templateId: string) =>
     `/api/pdf-filler/templates/${encodeURIComponent(templateId)}/schema`
   );
 
+export async function fetchPdfTemplatePdf(templateId: string): Promise<Blob> {
+  const url = `${API_BASE}/api/pdf-filler/templates/${encodeURIComponent(templateId)}/pdf`;
+  const res = await fetch(url, { method: 'GET', credentials: 'include' });
+  if (!res.ok) {
+    let message = 'Failed to load template PDF.';
+    try {
+      const err = (await res.json()) as { error?: string; detail?: string };
+      message = err.detail || err.error || message;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(message, res.status);
+  }
+  return res.blob();
+}
+
 export const uploadPdfTemplate = (params: {
   fileName: string;
   fileData: string;

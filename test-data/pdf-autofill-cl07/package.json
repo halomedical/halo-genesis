@@ -1,0 +1,13 @@
+{
+  "name": "pdf-autofill-cl07",
+  "version": "1.0.0",
+  "description": "Fictional patient data for testing **CL07 Accident or Illness Claim Form (Medical Practitioner)** autofill against Halo `patient-summary.md`.",
+  "main": "bootstrap-in-browser.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
