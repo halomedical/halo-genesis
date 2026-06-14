@@ -17,6 +17,10 @@ import {
   PDF_DOCUMENT_TYPE_TO_PATIENT_SUBFOLDER,
 } from '../../../../../../shared/pdfFiller';
 import {
+  getInsuranceCompanyLabel,
+  UNCATEGORIZED_INSURER_LABEL,
+} from '../../../../../../shared/insuranceCompanies';
+import {
   autofillPatientPdfForm,
   fetchPdfTemplates,
   fetchPdfTemplateSchema,
@@ -108,6 +112,25 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
     () => (selectedType ? templatesByType.get(selectedType) ?? [] : []),
     [selectedType, templatesByType]
   );
+
+  const insuranceFormGroups = useMemo(() => {
+    if (selectedType !== 'insurance_form') return null;
+    const groups = new Map<string, PdfTemplateManifestEntry[]>();
+    for (const t of formsForSelectedType) {
+      const key = t.insuranceCompanyId ?? '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(t);
+    }
+    const keys = [...groups.keys()].sort((a, b) => {
+      const la = a ? getInsuranceCompanyLabel(a) ?? a : UNCATEGORIZED_INSURER_LABEL;
+      const lb = b ? getInsuranceCompanyLabel(b) ?? b : UNCATEGORIZED_INSURER_LABEL;
+      return la.localeCompare(lb);
+    });
+    return keys.map((key) => ({
+      label: key ? getInsuranceCompanyLabel(key) ?? key : UNCATEGORIZED_INSURER_LABEL,
+      templates: groups.get(key) ?? [],
+    }));
+  }, [formsForSelectedType, selectedType]);
 
   const unplacedKeys = useMemo(
     () => (schema ? schemaKeysWithoutLayout(schema) : []),
@@ -244,8 +267,8 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
       : null;
 
   return (
-    <div className="flex flex-col gap-5 h-full min-h-0">
-      <div className="flex flex-wrap items-start justify-between gap-3 shrink-0">
+    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600">
             <Brain className="h-5 w-5" />
@@ -325,28 +348,62 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
             <h3 className="text-base font-semibold text-slate-900 mt-0.5">Choose a form</h3>
           </div>
           <ul className="divide-y divide-slate-100">
-            {formsForSelectedType.map((t) => (
-              <li key={t.templateId}>
-                <button
-                  type="button"
-                  disabled={loadingForm && selectedId === t.templateId}
-                  onClick={() => void pickForm(t.templateId)}
-                  className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50 disabled:opacity-60"
-                >
-                  <div className="min-w-0">
-                    <div className="font-medium text-slate-900 truncate">{t.displayName}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">
-                      Updated {new Date(t.updatedAt).toLocaleDateString()}
+            {insuranceFormGroups
+              ? insuranceFormGroups.map((group) => (
+                  <li key={group.label}>
+                    <div className="px-5 py-2 bg-slate-50 border-b border-slate-100">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {group.label}
+                      </p>
                     </div>
-                  </div>
-                  {loadingForm && selectedId === t.templateId ? (
-                    <Loader2 className="h-5 w-5 shrink-0 animate-spin text-cyan-600" />
-                  ) : (
-                    <ChevronRight className="h-5 w-5 shrink-0 text-slate-300" />
-                  )}
-                </button>
-              </li>
-            ))}
+                    <ul className="divide-y divide-slate-100">
+                      {group.templates.map((t) => (
+                        <li key={t.templateId}>
+                          <button
+                            type="button"
+                            disabled={loadingForm && selectedId === t.templateId}
+                            onClick={() => void pickForm(t.templateId)}
+                            className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-medium text-slate-900 truncate">{t.displayName}</div>
+                              <div className="text-xs text-slate-500 mt-0.5">
+                                Updated {new Date(t.updatedAt).toLocaleDateString()}
+                              </div>
+                            </div>
+                            {loadingForm && selectedId === t.templateId ? (
+                              <Loader2 className="h-5 w-5 shrink-0 animate-spin text-cyan-600" />
+                            ) : (
+                              <ChevronRight className="h-5 w-5 shrink-0 text-slate-300" />
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))
+              : formsForSelectedType.map((t) => (
+                  <li key={t.templateId}>
+                    <button
+                      type="button"
+                      disabled={loadingForm && selectedId === t.templateId}
+                      onClick={() => void pickForm(t.templateId)}
+                      className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium text-slate-900 truncate">{t.displayName}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          Updated {new Date(t.updatedAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      {loadingForm && selectedId === t.templateId ? (
+                        <Loader2 className="h-5 w-5 shrink-0 animate-spin text-cyan-600" />
+                      ) : (
+                        <ChevronRight className="h-5 w-5 shrink-0 text-slate-300" />
+                      )}
+                    </button>
+                  </li>
+                ))}
           </ul>
         </div>
       ) : step === 'fill' && schema && selectedTemplate ? (
@@ -403,7 +460,7 @@ export const PatientFormIntelligenceTab: React.FC<PatientFormIntelligenceTabProp
             </div>
           ) : (
             <>
-              <div className="flex flex-1 min-h-0 flex-col">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <PdfOverlayFillCanvas
                   pdfFile={pdfFile}
                   schema={schema}

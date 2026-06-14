@@ -474,7 +474,7 @@ export const App = () => {
         />
       </div>
 
-      <div className={`flex-1 flex flex-col h-screen relative ${activeMainView === 'workspace' && !selectedPatientId ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`flex-1 flex min-h-0 flex-col h-screen relative ${activeMainView === 'workspace' && !selectedPatientId ? 'hidden md:flex' : 'flex'}`}>
         {activeMainView === 'marketplace' ? (
           <MarketplacePage
             adminAgentEnabled={adminAgentEnabled}

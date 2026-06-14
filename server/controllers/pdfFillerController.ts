@@ -1,11 +1,17 @@
 import { Request, Response } from 'express';
 import { isPdfDocumentType } from '../../shared/pdfFiller';
+import { validateInsuranceCompanyForDocumentType } from '../../shared/insuranceCompanies';
 import { sanitizeString } from '../services/drive';
 import { savePracticePdfTemplate } from '../services/practicePdfTemplateStore';
 import {
   extractSchemaFromPdf,
   fillPdfViaSidecarResponse,
 } from '../services/pdfFillerClient';
+import {
+  inferTemplateMetadataFromPdf,
+  mergeTemplateMetadata,
+} from '../services/pdfTemplateMetadataInference';
+import { registerTemplateSharing } from '../services/registerTemplateSharing';
 import {
   getGlobalSchemaByHash,
   isFormTemplateCacheConfigured,
@@ -240,6 +246,8 @@ export async function handlePublishPracticeTemplate(req: Request, res: Response)
     const documentTypeRaw = sanitizeString(req.body.documentType, 64);
     const displayNameInput = sanitizeString(req.body.displayName, 255);
     const templateId = sanitizeString(req.body.templateId, 64) || undefined;
+    const insuranceCompanyIdRaw = sanitizeString(req.body.insuranceCompanyId, 64);
+    const keepPrivate = Boolean(req.body.keepPrivate);
 
     if (!fileName.toLowerCase().endsWith('.pdf')) {
       res.status(400).json({ error: 'fileName must end with .pdf' });
@@ -266,6 +274,23 @@ export async function handlePublishPracticeTemplate(req: Request, res: Response)
     const computedHash = md5HexPdf(pdfBuffer);
     if (computedHash !== pdfHash) {
       res.status(400).json({ error: 'pdfHash does not match uploaded PDF bytes.' });
+      return;
+    }
+
+    const inferred = await inferTemplateMetadataFromPdf(pdfBuffer, fileName);
+    const merged = mergeTemplateMetadata({
+      fileName,
+      displayNameInput,
+      documentTypeInput: documentTypeRaw,
+      insuranceCompanyIdInput: insuranceCompanyIdRaw || undefined,
+      inferred,
+    });
+    const insuranceErr = validateInsuranceCompanyForDocumentType(
+      merged.documentType,
+      merged.insuranceCompanyId
+    );
+    if (insuranceErr) {
+      res.status(400).json({ error: insuranceErr });
       return;
     }
 
@@ -313,7 +338,10 @@ export async function handlePublishPracticeTemplate(req: Request, res: Response)
     }
 
     const stem = fileName.replace(/\.pdf$/i, '').trim() || 'template';
-    const displayName = displayNameInput || stem;
+    const displayName = merged.displayName || displayNameInput || stem;
+
+    const insuranceCompanyId =
+      merged.documentType === 'insurance_form' ? merged.insuranceCompanyId : undefined;
 
     const template = await savePracticePdfTemplate({
       token,
@@ -321,9 +349,17 @@ export async function handlePublishPracticeTemplate(req: Request, res: Response)
       pdfBuffer,
       pdfHash,
       schema: schemaWithMeta,
-      documentType: documentTypeRaw,
+      documentType: merged.documentType,
       displayName,
       templateId,
+      insuranceCompanyId,
+    });
+
+    await registerTemplateSharing(req, {
+      pdfHash,
+      schema: schemaWithMeta,
+      entry: template,
+      keepPrivate,
     });
 
     res.json({
@@ -331,6 +367,7 @@ export async function handlePublishPracticeTemplate(req: Request, res: Response)
       pdfHash,
       template,
       globalCacheUpdated: isFormTemplateCacheConfigured(),
+      inferredMetadata: merged.inferred,
     });
   } catch (err) {
     sendControllerError(res, 500, err, 'Failed to publish practice template');

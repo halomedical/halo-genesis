@@ -16,6 +16,7 @@ import {
   PDF_DOCUMENT_TYPE_LABELS,
   type PdfDocumentType,
 } from '../../../../../../../shared/pdfFiller';
+import { INSURANCE_COMPANIES } from '../../../../../../../shared/insuranceCompanies';
 
 interface StudioSidebarProps {
   uploadedFile: File | null;
@@ -37,9 +38,12 @@ interface StudioSidebarProps {
   onFile: (file: File) => void;
   documentType: PdfDocumentType;
   displayName: string;
+  insuranceCompanyId: string;
   onDocumentTypeChange: (type: PdfDocumentType) => void;
   onDisplayNameChange: (name: string) => void;
+  onInsuranceCompanyIdChange: (id: string) => void;
   practiceTemplateId?: string;
+  loadingLibraryTemplate?: boolean;
   saving: boolean;
   onSaveTemplate: () => void;
   canSave: boolean;
@@ -73,9 +77,12 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
   onFile,
   documentType,
   displayName,
+  insuranceCompanyId,
   onDocumentTypeChange,
   onDisplayNameChange,
+  onInsuranceCompanyIdChange,
   practiceTemplateId,
+  loadingLibraryTemplate,
   saving,
   onSaveTemplate,
   canSave,
@@ -94,7 +101,14 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
 
   return (
     <div className="flex flex-col gap-4 p-5 overflow-y-auto h-full">
-      <PdfDropzone onFile={onFile} loading={extracting} />
+      <PdfDropzone onFile={onFile} loading={extracting || Boolean(loadingLibraryTemplate)} />
+
+      {loadingLibraryTemplate && (
+        <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+          Loading template from library…
+        </div>
+      )}
 
       {extractError && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -286,6 +300,24 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
               placeholder="Name shown when filling for patients"
             />
           </div>
+          {documentType === 'insurance_form' && (
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">
+                Insurance company
+              </label>
+              <select
+                value={insuranceCompanyId}
+                onChange={(e) => onInsuranceCompanyIdChange(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              >
+                {INSURANCE_COMPANIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
 

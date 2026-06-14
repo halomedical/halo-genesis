@@ -1,9 +1,12 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { PdfDocumentType } from '../../../../../../shared/pdfFiller';
+import { INSURANCE_COMPANIES } from '../../../../../../shared/insuranceCompanies';
 import {
   ApiError,
   approvePdfMapping,
   extractPdfTemplateSchema,
+  fetchPdfTemplatePdf,
+  fetchPdfTemplateSchema,
   fetchPdfTemplates,
   fillPdfFormStream,
   publishPracticePdfTemplate,
@@ -17,6 +20,7 @@ import { fileToBase64 } from './utils/pdfFile';
 import { useFormIntelligenceState } from './state/useFormIntelligenceState';
 import { usePdfExtractionProgress } from '../hooks/usePdfExtractionProgress';
 import { StudioSidebar } from './components/StudioSidebar';
+import { KeepFormPrivateControl } from '../components/KeepFormPrivateControl';
 import { IntakeSidebar } from './components/IntakeSidebar';
 import { PdfStudioCanvas } from './components/PdfStudioCanvas';
 import { PdfPageFooter } from './components/PdfPageFooter';
@@ -28,23 +32,33 @@ type ToastFn = (message: string, type: 'success' | 'error' | 'info') => void;
 
 interface FormIntelligencePageProps {
   onToast?: ToastFn;
+  initialTemplateId?: string | null;
+  onInitialTemplateLoaded?: () => void;
 }
 
 function defaultDisplayNameFromFile(file: File): string {
   return file.name.replace(/\.pdf$/i, '').trim() || file.name;
 }
 
-export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onToast }) => {
+export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({
+  onToast,
+  initialTemplateId,
+  onInitialTemplateLoaded,
+}) => {
   const state = useFormIntelligenceState();
   const { progress: extractionProgress, runWithFile: runExtractionWithProgress } =
     usePdfExtractionProgress('extract_api');
   const [documentType, setDocumentType] = useState<PdfDocumentType>('insurance_form');
+  const [insuranceCompanyId, setInsuranceCompanyId] = useState(INSURANCE_COMPANIES[0]?.id ?? '');
   const [displayName, setDisplayName] = useState('');
   const [practiceTemplateId, setPracticeTemplateId] = useState<string | undefined>();
+  const [loadingTemplateId, setLoadingTemplateId] = useState<string | null>(null);
+  const loadedTemplateRef = useRef<string | null>(null);
   const [selectedFieldKeys, setSelectedFieldKeys] = useState<string[]>([]);
   const [primaryFieldKey, setPrimaryFieldKey] = useState<string | null>(null);
   const [pendingDrawRect, setPendingDrawRect] = useState<PendingFieldRect | null>(null);
   const [fieldEditorOpen, setFieldEditorOpen] = useState(false);
+  const [keepPrivate, setKeepPrivate] = useState(false);
 
   const handleSelectionChange = useCallback((keys: string[], primary?: string | null) => {
     setSelectedFieldKeys(keys);
@@ -71,11 +85,59 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
         setPracticeTemplateId(existing.templateId);
         setDocumentType(existing.documentType);
         setDisplayName(existing.displayName);
+        if (existing.insuranceCompanyId) {
+          setInsuranceCompanyId(existing.insuranceCompanyId);
+        }
       }
     } catch {
       // Non-fatal — user can still publish with defaults
     }
   }, []);
+
+  const loadPracticeTemplate = useCallback(
+    async (templateId: string) => {
+      setLoadingTemplateId(templateId);
+      setSelectedFieldKeys([]);
+      setPrimaryFieldKey(null);
+      setPendingDrawRect(null);
+      setFieldEditorOpen(false);
+      state.setExtractError(null);
+      try {
+        const [{ template, schema: loaded }, pdfBlob] = await Promise.all([
+          fetchPdfTemplateSchema(templateId),
+          fetchPdfTemplatePdf(templateId),
+        ]);
+        const safeName = template.displayName.replace(/[^\w\s.-]+/g, '_').trim() || 'form';
+        const file = new File([pdfBlob], `${safeName}.pdf`, { type: 'application/pdf' });
+        state.applySavedTemplate({
+          file,
+          pdfHash: template.pdfHash ?? '',
+          schema: loaded,
+          extractionMethod: template.extractionMethod,
+        });
+        setPracticeTemplateId(template.templateId);
+        setDocumentType(template.documentType);
+        setDisplayName(template.displayName);
+        if (template.insuranceCompanyId) {
+          setInsuranceCompanyId(template.insuranceCompanyId);
+        }
+        onToast?.(`Loaded "${template.displayName}" from library.`, 'success');
+      } catch (e) {
+        onToast?.(e instanceof Error ? e.message : 'Failed to load template', 'error');
+      } finally {
+        setLoadingTemplateId(null);
+      }
+    },
+    [onToast, state]
+  );
+
+  useEffect(() => {
+    if (!initialTemplateId || loadedTemplateRef.current === initialTemplateId) return;
+    loadedTemplateRef.current = initialTemplateId;
+    void loadPracticeTemplate(initialTemplateId).finally(() => {
+      onInitialTemplateLoaded?.();
+    });
+  }, [initialTemplateId, loadPracticeTemplate, onInitialTemplateLoaded]);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -131,6 +193,10 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
 
   const handleSaveTemplate = useCallback(async () => {
     if (!state.pdfHash || !state.schema || !state.uploadedFile) return;
+    if (documentType === 'insurance_form' && !insuranceCompanyId) {
+      onToast?.('Select an insurance company before saving.', 'error');
+      return;
+    }
     state.setSaving(true);
     let mappingFieldCount: number | null = null;
     try {
@@ -177,6 +243,9 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
         documentType,
         displayName: displayName.trim() || defaultDisplayNameFromFile(state.uploadedFile),
         templateId: practiceTemplateId,
+        insuranceCompanyId:
+          documentType === 'insurance_form' ? insuranceCompanyId : undefined,
+        keepPrivate,
         extractionMethod: 'human_corrected',
         baselineSchema: state.baselineSchema ?? undefined,
         baselineExtractionMethod: state.extractionMethod || undefined,
@@ -195,7 +264,7 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
     } finally {
       state.setSaving(false);
     }
-  }, [displayName, documentType, onToast, practiceTemplateId, state]);
+  }, [displayName, documentType, insuranceCompanyId, keepPrivate, onToast, practiceTemplateId, state]);
 
   const handleCompile = useCallback(async () => {
     if (!state.uploadedFile || !state.schema) return;
@@ -286,6 +355,9 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
       <div className="flex flex-1 min-h-0">
         <aside className="w-[400px] shrink-0 border-r border-slate-200 bg-slate-50/50 flex flex-col min-h-0">
           {modeToggle}
+          <div className="px-4 pb-2">
+            <KeepFormPrivateControl keepPrivate={keepPrivate} onChange={setKeepPrivate} />
+          </div>
           <div className="flex-1 min-h-0 overflow-hidden">
             {state.currentMode === 'studio' ? (
               <StudioSidebar
@@ -309,9 +381,12 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({ onTo
                 saving={state.saving}
                 documentType={documentType}
                 displayName={displayName}
+                insuranceCompanyId={insuranceCompanyId}
                 onDocumentTypeChange={setDocumentType}
                 onDisplayNameChange={setDisplayName}
+                onInsuranceCompanyIdChange={setInsuranceCompanyId}
                 practiceTemplateId={practiceTemplateId}
+                loadingLibraryTemplate={loadingTemplateId != null}
                 onSaveTemplate={() => void handleSaveTemplate()}
                 canSave={Boolean(state.pdfHash && state.schema && state.uploadedFile)}
                 onNudge={(dx, dy) => state.nudgeSelectedFields(selectedFieldKeys, dx, dy)}

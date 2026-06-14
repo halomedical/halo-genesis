@@ -150,7 +150,7 @@ export const PdfOverlayFillCanvas: React.FC<PdfOverlayFillCanvasProps> = ({
     'h-full w-full min-w-0 rounded-sm border border-cyan-500/35 bg-white/90 px-0.5 text-[11px] leading-tight text-slate-900 shadow-none focus:border-cyan-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-cyan-500/40';
 
   return (
-    <div className="flex flex-1 flex-col min-h-0">
+    <div className="flex min-h-0 flex-1 basis-0 flex-col">
       <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 bg-slate-50/80 px-3 py-2">
         <button
           type="button"
@@ -182,7 +182,10 @@ export const PdfOverlayFillCanvas: React.FC<PdfOverlayFillCanvasProps> = ({
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto p-4 bg-slate-100/60">
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 basis-0 overflow-x-auto overflow-y-auto p-4 bg-slate-100/60"
+      >
         <div ref={pageWrapRef} className="w-full max-w-5xl mx-auto">
           <div className="relative shadow-lg ring-1 ring-slate-200/80 bg-white">
             {pdfLoading && (

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { FileStack, LayoutTemplate } from 'lucide-react';
+import { FileStack, Globe, LayoutTemplate } from 'lucide-react';
 import { FormIntelligencePage } from './form-intelligence/FormIntelligencePage';
 import { PdfTemplatesPage } from './PdfTemplatesPage';
+import { SharedFormsPage } from './SharedFormsPage';
 
-type HubTab = 'form-studio' | 'template-library';
+type HubTab = 'form-studio' | 'template-library' | 'shared-forms';
 type ToastFn = (message: string, type: 'success' | 'error' | 'info') => void;
 
 interface PdfFillerHubPageProps {
@@ -12,6 +13,12 @@ interface PdfFillerHubPageProps {
 
 export const PdfFillerHubPage: React.FC<PdfFillerHubPageProps> = ({ onToast }) => {
   const [tab, setTab] = useState<HubTab>('form-studio');
+  const [studioLoadTemplateId, setStudioLoadTemplateId] = useState<string | null>(null);
+
+  const openInStudio = (templateId: string) => {
+    setStudioLoadTemplateId(templateId);
+    setTab('form-studio');
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
@@ -41,13 +48,31 @@ export const PdfFillerHubPage: React.FC<PdfFillerHubPageProps> = ({ onToast }) =
             <FileStack className="h-4 w-4" />
             Template Library
           </button>
+          <button
+            type="button"
+            onClick={() => setTab('shared-forms')}
+            className={`inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold transition ${
+              tab === 'shared-forms'
+                ? 'border-cyan-600 text-cyan-700'
+                : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <Globe className="h-4 w-4" />
+            Shared Forms
+          </button>
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
         {tab === 'form-studio' ? (
-          <FormIntelligencePage onToast={onToast} />
+          <FormIntelligencePage
+            onToast={onToast}
+            initialTemplateId={studioLoadTemplateId}
+            onInitialTemplateLoaded={() => setStudioLoadTemplateId(null)}
+          />
+        ) : tab === 'template-library' ? (
+          <PdfTemplatesPage onToast={onToast} onOpenInStudio={openInStudio} />
         ) : (
-          <PdfTemplatesPage onToast={onToast} />
+          <SharedFormsPage onToast={onToast} />
         )}
       </div>
     </div>

@@ -15,7 +15,7 @@ import {
   handlePublishPracticeTemplate,
   handleSaveTemplate,
 } from '../controllers/pdfFillerController';
-import { md5HexPdf } from '../services/pdfHash';
+import { md5HexPdf, isValidPdfHash } from '../services/pdfHash';
 import { extractDataFromPatientSummary } from '../services/pdfFillerAutofill';
 import {
   autofillFromPatientSummary,
@@ -28,7 +28,7 @@ import {
   enrichPatientSummaryFromFormSubmission,
 } from '../services/patientSummary';
 import { schemaPropertiesToFields } from '../utils/pdfSchemaUtils';
-import { savePracticePdfTemplate } from '../services/practicePdfTemplateStore';
+import { savePracticePdfTemplate, updatePracticePdfTemplateMetadata, importSharedFormSchemaToPractice } from '../services/practicePdfTemplateStore';
 import {
   getEstimatedExtractionDurationMs,
   insertPdfExtractionTelemetry,
@@ -44,6 +44,18 @@ import {
   PDF_DOCUMENT_TYPE_TO_PATIENT_SUBFOLDER,
   type PdfDocumentType,
 } from '../../shared/pdfFiller';
+import { validateInsuranceCompanyForDocumentType } from '../../shared/insuranceCompanies';
+import {
+  inferTemplateMetadataFromPdf,
+  mergeTemplateMetadata,
+} from '../services/pdfTemplateMetadataInference';
+import { registerTemplateSharing } from '../services/registerTemplateSharing';
+import { getGlobalSchemaByHash } from '../services/formTemplateCache';
+import {
+  incrementSharedFormImportCount,
+  listPublicCatalogForPack,
+  listPublicSharedFormCatalog,
+} from '../services/sharedFormCatalogStore';
 
 const router = Router();
 router.use(requireAuth);
@@ -142,6 +154,10 @@ router.get('/templates/:templateId/pdf', async (req: Request, res: Response) => 
       res.status(404).json({ error: 'Template not found.' });
       return;
     }
+    if (entry.pdfPending || !entry.pdfDriveFileId) {
+      res.status(409).json({ error: 'Blank PDF not attached yet.', pdfPending: true });
+      return;
+    }
     const pdfBuffer = await downloadFileBuffer(token, entry.pdfDriveFileId);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${entry.displayName}.pdf"`);
@@ -165,6 +181,8 @@ router.post('/templates', async (req: Request, res: Response) => {
     const fileData = req.body.fileData as string;
     const documentTypeRaw = sanitizeString(req.body.documentType, 64);
     const displayNameInput = sanitizeString(req.body.displayName, 255);
+    const insuranceCompanyIdRaw = sanitizeString(req.body.insuranceCompanyId, 64);
+    const keepPrivate = Boolean(req.body.keepPrivate);
 
     if (!fileName || !fileName.toLowerCase().endsWith('.pdf')) {
       res.status(400).json({ error: 'A PDF file name is required.' });
@@ -187,13 +205,28 @@ router.post('/templates', async (req: Request, res: Response) => {
 
     const pdfBuffer = Buffer.from(fileData, 'base64');
     fileSizeBytes = pdfBuffer.length;
-    const stem = safeBaseName(fileName);
-    const displayName = displayNameInput || stem;
-    const documentType = documentTypeRaw as PdfDocumentType;
     pdfHash = md5HexPdf(pdfBuffer);
 
     const schema = await extractSchemaFromPdf(pdfBuffer, fileName);
     extractionMethod = String(schema['x-extraction-method'] || 'unknown');
+
+    const inferred = await inferTemplateMetadataFromPdf(pdfBuffer, fileName);
+    const merged = mergeTemplateMetadata({
+      fileName,
+      displayNameInput,
+      documentTypeInput: documentTypeRaw as PdfDocumentType,
+      insuranceCompanyIdInput: insuranceCompanyIdRaw || undefined,
+      inferred,
+    });
+
+    const insuranceErr = validateInsuranceCompanyForDocumentType(
+      merged.documentType,
+      merged.insuranceCompanyId
+    );
+    if (insuranceErr) {
+      res.status(400).json({ error: insuranceErr });
+      return;
+    }
 
     const entry = await savePracticePdfTemplate({
       token,
@@ -201,12 +234,20 @@ router.post('/templates', async (req: Request, res: Response) => {
       pdfBuffer,
       pdfHash,
       schema,
-      documentType,
-      displayName,
+      documentType: merged.documentType,
+      displayName: merged.displayName,
+      insuranceCompanyId: merged.insuranceCompanyId,
+    });
+
+    await registerTemplateSharing(req, {
+      pdfHash,
+      schema,
+      entry,
+      keepPrivate,
     });
 
     success = true;
-    res.json({ template: entry });
+    res.json({ template: entry, inferredMetadata: merged.inferred });
   } catch (err) {
     console.error('[pdf-filler] upload template:', err);
     const message = err instanceof Error ? err.message : 'Upload failed.';
@@ -227,6 +268,53 @@ router.post('/templates', async (req: Request, res: Response) => {
         success,
       });
     }
+  }
+});
+
+router.patch('/templates/:templateId', async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const templateId = String(req.params.templateId);
+    const displayName = sanitizeString(req.body.displayName, 255);
+    const documentTypeRaw = sanitizeString(req.body.documentType, 64);
+    const insuranceCompanyIdRaw = sanitizeString(req.body.insuranceCompanyId, 64);
+
+    if (!displayName) {
+      res.status(400).json({ error: 'displayName is required.' });
+      return;
+    }
+    if (!isPdfDocumentType(documentTypeRaw)) {
+      res.status(400).json({ error: 'Invalid document type.' });
+      return;
+    }
+    const insuranceErr = validateInsuranceCompanyForDocumentType(
+      documentTypeRaw,
+      insuranceCompanyIdRaw || undefined
+    );
+    if (insuranceErr) {
+      res.status(400).json({ error: insuranceErr });
+      return;
+    }
+
+    const documentType = documentTypeRaw as PdfDocumentType;
+    const insuranceCompanyId =
+      documentType === 'insurance_form' ? insuranceCompanyIdRaw || undefined : undefined;
+
+    const template = await updatePracticePdfTemplateMetadata({
+      token,
+      templateId,
+      displayName,
+      documentType,
+      insuranceCompanyId,
+    });
+    res.json({ template });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TEMPLATE_NOT_FOUND') {
+      res.status(404).json({ error: 'Template not found.' });
+      return;
+    }
+    console.error('[pdf-filler] patch template:', err);
+    res.status(500).json({ error: 'Failed to update template.' });
   }
 });
 
@@ -283,6 +371,9 @@ async function loadTemplatePdfAndSchema(
   schema: Record<string, unknown>;
 }> {
   const entry = await resolveTemplateEntry(token, templateId);
+  if (entry.pdfPending || !entry.pdfDriveFileId) {
+    throw new Error('PDF_PENDING');
+  }
   const [pdfBuffer, schemaBuffer] = await Promise.all([
     downloadFileBuffer(token, entry.pdfDriveFileId),
     downloadFileBuffer(token, entry.schemaDriveFileId),
@@ -420,6 +511,152 @@ router.post('/patients/:patientId/fill', async (req: Request, res: Response) => 
     console.error('[pdf-filler] fill:', err);
     const message = err instanceof Error ? err.message : 'Fill failed.';
     res.status(500).json({ error: 'Failed to generate filled PDF.', detail: message });
+  }
+});
+
+router.get('/shared-forms/catalog', async (req: Request, res: Response) => {
+  try {
+    const documentTypeRaw = sanitizeString(String(req.query.documentType || ''), 64);
+    const insuranceCompanyId = sanitizeString(String(req.query.insuranceCompanyId || ''), 64);
+
+    const filters: { documentType?: PdfDocumentType; insuranceCompanyId?: string } = {};
+    if (documentTypeRaw && isPdfDocumentType(documentTypeRaw)) {
+      filters.documentType = documentTypeRaw;
+    }
+    if (insuranceCompanyId) filters.insuranceCompanyId = insuranceCompanyId;
+
+    const entries = await listPublicSharedFormCatalog(filters);
+    res.json({ entries });
+  } catch (err) {
+    console.error('[pdf-filler] shared catalog:', err);
+    res.status(500).json({ error: 'Failed to load shared forms catalog.' });
+  }
+});
+
+router.post('/shared-forms/:pdfHash/import', async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const pdfHash = sanitizeString(req.params.pdfHash, 64).toLowerCase();
+    if (!isValidPdfHash(pdfHash)) {
+      res.status(400).json({ error: 'Invalid pdfHash.' });
+      return;
+    }
+
+    const cached = await getGlobalSchemaByHash(pdfHash);
+    if (!cached) {
+      res.status(502).json({ error: 'Shared form schema not available yet.' });
+      return;
+    }
+
+    const catalog = await listPublicSharedFormCatalog({});
+    const meta = catalog.find((e) => e.pdf_hash === pdfHash);
+    if (!meta) {
+      res.status(404).json({ error: 'Shared form not found or is private.' });
+      return;
+    }
+
+    const template = await importSharedFormSchemaToPractice({
+      token,
+      pdfHash,
+      schema: cached.schema_json,
+      documentType: meta.document_type,
+      displayName: meta.display_name,
+      insuranceCompanyId: meta.insurance_company_id ?? undefined,
+    });
+
+    void incrementSharedFormImportCount(pdfHash);
+    res.json({ template, pdfPending: true });
+  } catch (err) {
+    console.error('[pdf-filler] shared import:', err);
+    res.status(500).json({ error: 'Failed to import shared form.' });
+  }
+});
+
+router.post('/shared-forms/import-pack', async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const documentTypeRaw = sanitizeString(req.body.documentType, 64);
+    const insuranceCompanyId = sanitizeString(req.body.insuranceCompanyId, 64);
+
+    if (!isPdfDocumentType(documentTypeRaw) || documentTypeRaw !== 'insurance_form') {
+      res.status(400).json({ error: 'Pack import requires documentType insurance_form.' });
+      return;
+    }
+    if (!insuranceCompanyId) {
+      res.status(400).json({ error: 'insuranceCompanyId is required.' });
+      return;
+    }
+
+    const pack = await listPublicCatalogForPack(documentTypeRaw, insuranceCompanyId);
+    const imported: string[] = [];
+    for (const item of pack) {
+      const cached = await getGlobalSchemaByHash(item.pdf_hash);
+      if (!cached) continue;
+      await importSharedFormSchemaToPractice({
+        token,
+        pdfHash: item.pdf_hash,
+        schema: cached.schema_json,
+        documentType: item.document_type,
+        displayName: item.display_name,
+        insuranceCompanyId: item.insurance_company_id ?? undefined,
+      });
+      void incrementSharedFormImportCount(item.pdf_hash);
+      imported.push(item.pdf_hash);
+    }
+
+    res.json({ importedCount: imported.length, pdfHashes: imported });
+  } catch (err) {
+    console.error('[pdf-filler] shared import pack:', err);
+    res.status(500).json({ error: 'Failed to import shared form pack.' });
+  }
+});
+
+router.post('/shared-forms/:pdfHash/attach', async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const pdfHash = sanitizeString(req.params.pdfHash, 64).toLowerCase();
+    const fileName = sanitizeString(req.body.fileName, 255);
+    const fileData = req.body.fileData as string;
+
+    if (!isValidPdfHash(pdfHash) || !fileData) {
+      res.status(400).json({ error: 'pdfHash and fileData are required.' });
+      return;
+    }
+
+    const pdfBuffer = Buffer.from(fileData, 'base64');
+    if (md5HexPdf(pdfBuffer) !== pdfHash) {
+      res.status(400).json({ error: 'PDF does not match expected form fingerprint.' });
+      return;
+    }
+
+    const folderId = await getOrCreatePracticeAdminPdfDocumentsFolder(token);
+    const { manifest } = await loadPdfTemplatesManifest(token, folderId);
+    const entry = manifest.templates.find((t) => t.pdfHash === pdfHash);
+    if (!entry) {
+      res.status(404).json({ error: 'Import this form to your library first.' });
+      return;
+    }
+
+    const schemaBuffer = await downloadFileBuffer(token, entry.schemaDriveFileId);
+    const schema = JSON.parse(schemaBuffer.toString('utf-8')) as Record<string, unknown>;
+    const safeName = `${entry.displayName.replace(/[^\w\s.-]+/g, '_').trim() || 'form'}.pdf`;
+
+    const template = await savePracticePdfTemplate({
+      token,
+      fileName: fileName?.endsWith('.pdf') ? fileName : safeName,
+      pdfBuffer,
+      pdfHash,
+      schema,
+      documentType: entry.documentType,
+      displayName: entry.displayName,
+      templateId: entry.templateId,
+      insuranceCompanyId: entry.insuranceCompanyId,
+    });
+
+    res.json({ template });
+  } catch (err) {
+    console.error('[pdf-filler] shared attach:', err);
+    res.status(500).json({ error: 'Failed to attach PDF.' });
   }
 });
 

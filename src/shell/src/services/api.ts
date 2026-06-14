@@ -1048,11 +1048,37 @@ export const uploadPdfTemplate = (params: {
   fileData: string;
   documentType: PdfDocumentType;
   displayName?: string;
+  insuranceCompanyId?: string;
+  keepPrivate?: boolean;
 }) =>
-  request<{ template: PdfTemplateManifestEntry }>('/api/pdf-filler/templates', {
+  request<{
+    template: PdfTemplateManifestEntry;
+    inferredMetadata?: {
+      documentType: PdfDocumentType;
+      insuranceCompanyId: string | null;
+      displayName: string;
+      confidence: string;
+    } | null;
+  }>('/api/pdf-filler/templates', {
     method: 'POST',
     body: JSON.stringify(params),
   });
+
+export const updatePdfTemplate = (
+  templateId: string,
+  params: {
+    displayName: string;
+    documentType: PdfDocumentType;
+    insuranceCompanyId?: string;
+  }
+) =>
+  request<{ template: PdfTemplateManifestEntry }>(
+    `/api/pdf-filler/templates/${encodeURIComponent(templateId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(params),
+    }
+  );
 
 export const deletePdfTemplate = (templateId: string) =>
   request<{ success: boolean }>(`/api/pdf-filler/templates/${encodeURIComponent(templateId)}`, {
@@ -1141,6 +1167,8 @@ export const publishPracticePdfTemplate = (params: {
   documentType: PdfDocumentType;
   displayName: string;
   templateId?: string;
+  insuranceCompanyId?: string;
+  keepPrivate?: boolean;
   extractionMethod?: string;
   schemaVersion?: number;
   baselineSchema?: Record<string, unknown>;
@@ -1151,10 +1179,59 @@ export const publishPracticePdfTemplate = (params: {
     pdfHash: string;
     template: PdfTemplateManifestEntry;
     globalCacheUpdated: boolean;
+    inferredMetadata?: unknown;
   }>('/api/pdf-filler/templates/publish', {
     method: 'POST',
     body: JSON.stringify(params),
   });
+
+export type SharedFormCatalogEntry = {
+  pdf_hash: string;
+  display_name: string;
+  document_type: PdfDocumentType;
+  insurance_company_id: string | null;
+  schema_version: number;
+  extraction_method: string;
+  import_count: number;
+  contributor_count: number;
+};
+
+export const fetchSharedFormsCatalog = (params?: {
+  documentType?: PdfDocumentType;
+  insuranceCompanyId?: string;
+}) => {
+  const q = new URLSearchParams();
+  if (params?.documentType) q.set('documentType', params.documentType);
+  if (params?.insuranceCompanyId) q.set('insuranceCompanyId', params.insuranceCompanyId);
+  const qs = q.toString();
+  return request<{ entries: SharedFormCatalogEntry[] }>(
+    `/api/pdf-filler/shared-forms/catalog${qs ? `?${qs}` : ''}`
+  );
+};
+
+export const importSharedForm = (pdfHash: string) =>
+  request<{ template: PdfTemplateManifestEntry; pdfPending: boolean }>(
+    `/api/pdf-filler/shared-forms/${encodeURIComponent(pdfHash)}/import`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+
+export const importSharedFormPack = (params: {
+  documentType: PdfDocumentType;
+  insuranceCompanyId: string;
+}) =>
+  request<{ importedCount: number; pdfHashes: string[] }>(
+    '/api/pdf-filler/shared-forms/import-pack',
+    { method: 'POST', body: JSON.stringify(params) }
+  );
+
+export const attachSharedFormPdf = (
+  pdfHash: string,
+  params: { fileName: string; fileData: string }
+) =>
+  request<{ template: PdfTemplateManifestEntry }>(
+    `/api/pdf-filler/shared-forms/${encodeURIComponent(pdfHash)}/attach`,
+    { method: 'POST', body: JSON.stringify(params) }
+  );
 
 export const saveGlobalPdfTemplateSchema = (params: {
   pdfHash: string;

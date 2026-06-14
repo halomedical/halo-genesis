@@ -83,6 +83,32 @@ export function useFormIntelligenceState() {
     []
   );
 
+  /** Load an existing practice template from the library (no re-extraction). */
+  const applySavedTemplate = useCallback(
+    (params: {
+      file: File;
+      pdfHash: string;
+      schema: Record<string, unknown>;
+      extractionMethod: string;
+    }) => {
+      setUploadedFile(params.file);
+      setPdfHash(params.pdfHash);
+      setPdfSha256('');
+      setExtractionRunId('');
+      setPredictionJson(null);
+      setSchema(cloneSchema(params.schema));
+      setBaselineSchema(cloneSchema(params.schema));
+      setFormData(initialFormDataFromSchema(params.schema));
+      setCacheHit(null);
+      setExtractionMethod(params.extractionMethod);
+      setCurrentPage(1);
+      setNumPages(0);
+      setExtractError(null);
+      setStudioCanvasMode('select');
+    },
+    []
+  );
+
   const updateFieldLayout = useCallback(
     (key: string, patch: Partial<Pick<LayoutField, 'page' | 'x' | 'y' | 'width' | 'height'>>) => {
       setSchema((prev) => (prev ? applyLayoutToSchema(prev, key, patch) : prev));
@@ -213,6 +239,7 @@ export function useFormIntelligenceState() {
     fields,
     resetForNewFile,
     applyExtractResult,
+    applySavedTemplate,
     updateFieldLayout,
     updateFieldsLayout,
     nudgeSelectedFields,

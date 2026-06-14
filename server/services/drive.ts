@@ -1,6 +1,10 @@
 import mammoth from 'mammoth';
 import { config } from '../config';
 import { PRACTICE_ADMIN_FOLDER, PDF_DOCUMENTS_FOLDER } from '../../shared/folderStructure';
+import {
+  PDF_DOCUMENT_TYPE_LABELS,
+  type PdfDocumentType,
+} from '../../shared/pdfFiller';
 
 // Polyfill browser APIs needed by pdf-parse (set up at module load time)
 // These are needed because pdf-parse's dependency pdfjs-dist uses them at module load
@@ -297,6 +301,68 @@ export async function getOrCreatePracticeAdminPdfDocumentsFolder(token: string):
   const haloRootId = await getHaloRootFolder(token);
   const practiceAdminId = await getOrCreateSubfolder(token, haloRootId, PRACTICE_ADMIN_FOLDER);
   return getOrCreateSubfolder(token, practiceAdminId, PDF_DOCUMENTS_FOLDER);
+}
+
+/**
+ * PDF Documents / {document type label}/
+ */
+export async function getOrCreatePracticePdfDocumentTypeFolder(
+  token: string,
+  documentType: PdfDocumentType
+): Promise<string> {
+  const pdfRootId = await getOrCreatePracticeAdminPdfDocumentsFolder(token);
+  const folderName = PDF_DOCUMENT_TYPE_LABELS[documentType];
+  return getOrCreateSubfolder(token, pdfRootId, folderName);
+}
+
+/**
+ * PDF Documents / {document type} / {insurer label}/
+ */
+export async function getOrCreatePracticePdfInsurerFolder(
+  token: string,
+  _insuranceCompanyId: string,
+  folderLabel: string,
+  documentTypeFolderId: string
+): Promise<string> {
+  const safeName = folderLabel.replace(/[^\w\s.-]/g, ' ').trim().slice(0, 80) || _insuranceCompanyId;
+  return getOrCreateSubfolder(token, documentTypeFolderId, safeName);
+}
+
+/**
+ * @deprecated use getOrCreatePracticePdfInsurerFolder with document type parent
+ */
+export async function getOrCreatePracticePdfInsurerFolderLegacy(
+  token: string,
+  insuranceCompanyId: string,
+  folderLabel: string
+): Promise<string> {
+  const pdfRootId = await getOrCreatePracticeAdminPdfDocumentsFolder(token);
+  const safeName = folderLabel.replace(/[^\w\s.-]/g, ' ').trim().slice(0, 80) || insuranceCompanyId;
+  return getOrCreateSubfolder(token, pdfRootId, safeName);
+}
+
+/**
+ * Move a Drive file to a different parent folder (same shared drive / My Drive tree).
+ */
+export async function moveDriveFile(
+  token: string,
+  fileId: string,
+  newParentFolderId: string
+): Promise<void> {
+  const meta = await driveRequest(
+    token,
+    `/files/${fileId}?fields=parents`
+  );
+  const parents = (meta as { parents?: string[] }).parents;
+  if (!parents?.length) {
+    throw new Error(`Drive file ${fileId} has no parents`);
+  }
+  const removeParents = parents.join(',');
+  await driveRequest(
+    token,
+    `/files/${fileId}?addParents=${encodeURIComponent(newParentFolderId)}&removeParents=${encodeURIComponent(removeParents)}`,
+    { method: 'PATCH', body: JSON.stringify({}) }
+  );
 }
 
 /**

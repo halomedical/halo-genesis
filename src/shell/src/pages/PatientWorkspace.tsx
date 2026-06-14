@@ -1465,7 +1465,7 @@ export const PatientWorkspace: React.FC<Props> = ({
   const parsedPatientSummary = parsePatientSummaryMarkdown(patientSummaryMarkdown);
 
   return (
-    <div className="flex flex-col h-full bg-white relative w-full">
+    <div className="flex flex-col h-full min-h-0 bg-white relative w-full">
       {/* Header */}
       <div className="border-b border-slate-200 px-4 md:px-8 py-4 flex flex-col md:flex-row md:justify-between md:items-start bg-white shadow-sm z-10 gap-4">
         <div className="flex items-start gap-3">
@@ -1581,7 +1581,7 @@ export const PatientWorkspace: React.FC<Props> = ({
 
       {/* Content */}
       <div
-        className={`flex-1 ${
+        className={`flex-1 min-h-0 ${
           activeTab === 'chat'
             ? 'overflow-hidden bg-[linear-gradient(180deg,#fbfdff_0%,#f5fbfe_100%)] px-0 py-0'
             : activeTab === 'notes'
@@ -1598,7 +1598,7 @@ export const PatientWorkspace: React.FC<Props> = ({
               : activeTab === 'notes'
                 ? 'mx-auto h-full max-w-[1480px]'
                 : activeTab === 'form-intelligence'
-                  ? 'mx-auto h-full max-w-6xl flex flex-col min-h-0'
+                  ? 'mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden'
                 : 'mx-auto max-w-6xl'
           }
         >

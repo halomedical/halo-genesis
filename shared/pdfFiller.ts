@@ -33,6 +33,10 @@ export interface PdfTemplateManifestEntry {
   templateId: string;
   displayName: string;
   documentType: PdfDocumentType;
+  /** Curated id from shared/insuranceCompanies — when documentType is insurance_form. */
+  insuranceCompanyId?: string;
+  /** When true, schema is on Drive but blank PDF must still be attached (shared import). */
+  pdfPending?: boolean;
   pdfDriveFileId: string;
   schemaDriveFileId: string;
   /** MD5 hex of blank PDF bytes — used to upsert the same template from Form Studio. */

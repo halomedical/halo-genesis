@@ -15,7 +15,7 @@ export const PdfPageFooter: React.FC<PdfPageFooterProps> = ({
   if (numPages <= 0) return null;
 
   return (
-    <div className="sticky bottom-0 flex items-center justify-center gap-4 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-sm">
+    <div className="flex shrink-0 items-center justify-center gap-4 border-t border-slate-200 bg-white px-4 py-3">
       <button
         type="button"
         disabled={currentPage <= 1}
