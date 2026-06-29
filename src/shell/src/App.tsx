@@ -4,15 +4,11 @@ import { PatientWorkspace, type WorkspaceNavigationIntent } from './pages/Patien
 import { Toast } from './components/Toast';
 import { SettingsModal } from './components/SettingsModal';
 import { UploadHud } from './components/UploadHud';
-<<<<<<< HEAD
-import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson, updatePatientFamily } from './services/api';
-=======
 import {
   checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient,
   loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson,
   updatePatientFamily, fetchOnboardingState, completeOnboarding,
 } from './services/api';
->>>>>>> origin/staging
 import { AdminAgentPanel } from './modules/admin-agent/components/AdminAgentPanel';
 import { AdminAgentOnboarding } from './modules/admin-agent/components/AdminAgentOnboarding';
 import { BillingPage } from './modules/billing/BillingPage';
@@ -482,14 +478,9 @@ export const App = () => {
   }
 
   const activePatient = patients.find(p => p.id === selectedPatientId);
-<<<<<<< HEAD
-  const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
-  const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
-=======
   const admissionsEnabled = effectiveFeatures?.admissions ?? false;
   const billingEnabled = effectiveFeatures?.billing ?? false;
   const scribeEnabled = effectiveFeatures?.scribe ?? false;
->>>>>>> origin/staging
   const hideSidebarOnMobile = activeMainView === 'workspace' && Boolean(selectedPatientId);
 
   return (
@@ -628,14 +619,6 @@ export const App = () => {
           onComplete={() => {
             localStorage.setItem('halo_agent_onboarding_done', '1');
             setShowAgentOnboarding(false);
-<<<<<<< HEAD
-            const updated: Parameters<typeof handleSaveSettings>[0] = {
-              ...(userSettings || {}),
-              modules: { ...(userSettings?.modules || {}), adminAgent: true },
-            } as Parameters<typeof handleSaveSettings>[0];
-            handleSaveSettings(updated).catch(() => {});
-=======
->>>>>>> origin/staging
             setAdminAgentOpen(true);
             setActiveMainView('workspace');
           }}

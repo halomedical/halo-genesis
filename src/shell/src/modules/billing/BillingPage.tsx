@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-=======
-import React, { useMemo, useRef, useState } from 'react';
->>>>>>> origin/staging
 import { RefreshCw } from 'lucide-react';
 import {
   billingGetClaims,
@@ -10,19 +6,26 @@ import {
   billingCheckEligibility,
   billingSubmitClaim,
   billingReverseClaim,
-<<<<<<< HEAD
   formatBillingError,
   ELIGIBILITY_REQUEST_TYPE_OPTIONS,
   eligibilityRequiresMemberNumber,
   normalizeEligibilityRequestType,
+  formatClaimStatusLabel,
+  isClaimStatusBillable,
+  claimStatusBadgeClass,
+  resolveBillableCents,
   type BillingClaimCreatePayload,
   type BillingEligibilityPayload,
+  type ClaimLineItemResultDto,
+  type ClaimResultDto,
   type EligibilityRequestType,
-=======
-  type BillingClaimCreatePayload,
-  type BillingEligibilityPayload,
->>>>>>> origin/staging
   type EligibilityResponseDto,
+  dependantCodesEqual,
+  type FamilyMemberDto,
+  type FamilyMemberInquiryMatchDto,
+  parseStoredFamilyMembers,
+  parseStoredInquiryMatch,
+  parseStoredLineItemResults,
   type StoredClaimRecord,
 } from './services/billingApi';
 import {
@@ -34,15 +37,12 @@ import {
   appendPatientBillingClaim,
   appendPatientBillingEligibility,
   fetchPatientBillingClaims,
+  fetchPatientBillingEligibility,
 } from './services/api';
 
 type ToastFn = (message: string, type?: 'success' | 'error' | 'info') => void;
 
-<<<<<<< HEAD
 type ClaimsSubTab = 'list' | 'submit' | 'reverse' | 'financials';
-=======
-type ClaimsSubTab = 'list' | 'submit' | 'reverse';
->>>>>>> origin/staging
 
 const LS_LAST_SUBMIT = 'halo_billing_last_submit_payload_v1';
 const LS_LAST_ELIGIBILITY = 'halo_billing_last_eligibility_payload_v1';
@@ -71,7 +71,6 @@ function writeJson(key: string, value: unknown) {
   }
 }
 
-<<<<<<< HEAD
 function BillingErrorAlert({
   title,
   message,
@@ -105,10 +104,209 @@ function BillingErrorAlert({
   );
 }
 
-=======
->>>>>>> origin/staging
+function ClaimLineItemResultsPanel({ results }: { results: ClaimLineItemResultDto[] }) {
+  if (!results.length) return null;
+  return (
+    <div className="mt-3">
+      <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Line item outcomes</p>
+      <div className="mt-2 space-y-2">
+        {results.map((li) => (
+          <div
+            key={li.lineNumber}
+            className={`rounded-lg border px-3 py-2 text-xs ${
+              li.billable
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                : 'border-rose-200 bg-rose-50 text-rose-900'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold">
+                Line {li.lineNumber}
+                {li.procedureCode ? ` · ${li.procedureCode}` : ''}
+                {li.nappiCode ? ` · NAPPI ${li.nappiCode}` : ''}
+              </span>
+              <span className="font-bold uppercase tracking-wide">
+                {li.billable ? 'billable' : 'not billable'}
+              </span>
+            </div>
+            {(li.grossCents != null || li.nettCents != null) && (
+              <p className="mt-1 text-slate-600">
+                {typeof li.nettCents === 'number'
+                  ? formatCents(li.nettCents)
+                  : typeof li.grossCents === 'number'
+                    ? formatCents(li.grossCents)
+                    : ''}
+              </p>
+            )}
+            {li.messages?.length ? (
+              <ul className="mt-1 list-disc pl-4">
+                {li.messages.map((m, idx) => (
+                  <li key={`${li.lineNumber}-${idx}`}>
+                    {m.code ? `${m.type} ${m.code}: ` : `${m.type}: `}
+                    {m.text}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ClaimSubmitResultPanel({ result }: { result: ClaimResultDto }) {
+  const billable = resolveBillableCents(result);
+  const lineResults = result.lineItemResults ?? [];
+  return (
+    <div className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50/50 p-4">
+      <p className="text-xs font-bold uppercase tracking-wider text-cyan-800">Last claim response</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+        <span
+          className={`rounded-full border bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${claimStatusBadgeClass(result.status)}`}
+        >
+          {formatClaimStatusLabel(result.status)}
+        </span>
+        {result.transactionNumber ? (
+          <span className="text-slate-700">
+            Tx <span className="font-mono font-semibold">{result.transactionNumber}</span>
+          </span>
+        ) : null}
+        {typeof billable === 'number' ? (
+          <span className="text-slate-700">
+            Billable <span className="font-semibold">{formatCents(billable)}</span>
+          </span>
+        ) : null}
+      </div>
+      {result.hnet ? (
+        <p className="mt-2 text-xs text-slate-700">
+          <span className="font-semibold">HNET:</span> {result.hnet}
+        </p>
+      ) : null}
+      {result.planCode ? (
+        <p className="mt-1 text-xs text-slate-700">
+          <span className="font-semibold">Plan:</span> {result.planCode}
+        </p>
+      ) : null}
+      {lineResults.length ? <ClaimLineItemResultsPanel results={lineResults} /> : null}
+      {result.messages?.length ? (
+        <ul className="mt-2 list-disc pl-5 text-xs text-slate-600">
+          {result.messages.map((msg, idx) => (
+            <li key={`submit-msg-${idx}`}>{msg}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function VerifiedPatientPanel({ patient }: { patient: FamilyMemberDto }) {
+  return (
+    <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/80 p-3">
+      <p className="text-xs font-bold uppercase tracking-wider text-sky-800">Confirmed on scheme</p>
+      <p className="mt-1 text-sm font-semibold text-slate-800">
+        Dep {patient.dependantCode}
+        {[patient.firstName, patient.lastName].filter(Boolean).join(' ') || '—'}
+      </p>
+      <p className="mt-1 text-xs text-slate-600">
+        {patient.dateOfBirth ? `DOB ${patient.dateOfBirth}` : ''}
+        {patient.idNumber ? ` · ID ${patient.idNumber}` : ''}
+      </p>
+    </div>
+  );
+}
+
+function FamilyMembersPanel({
+  members,
+  inquiryDependantCode,
+  inquiryMatch,
+  onApplyMember,
+}: {
+  members: FamilyMemberDto[];
+  inquiryDependantCode?: string;
+  inquiryMatch?: FamilyMemberInquiryMatchDto;
+  onApplyMember?: (member: FamilyMemberDto) => void;
+}) {
+  if (!members.length) return null;
+  const inquiryDep = (inquiryDependantCode ?? '').trim();
+  return (
+    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+      <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Family members (FAMCHECK)</p>
+      {inquiryDep ? (
+        <p className="mt-1 text-xs text-slate-600">
+          You checked dependant <span className="font-semibold">{inquiryDep}</span>
+          {inquiryMatch?.matched && inquiryMatch.member ? (
+            <>
+              {' '}
+              — matched roster dep <span className="font-semibold">{inquiryMatch.member.dependantCode}</span>
+              {inquiryMatch.matchReason ? ` (${inquiryMatch.matchReason})` : ''}
+            </>
+          ) : (
+            <span className="text-amber-800"> — no roster match; use ID or name to pick the right dependant.</span>
+          )}
+        </p>
+      ) : null}
+      <div className="mt-2 space-y-2">
+        {members.map((m) => {
+          const isMatch = inquiryMatch?.matched && inquiryMatch.member?.dependantCode === m.dependantCode;
+          const depMismatch =
+            inquiryDep &&
+            inquiryMatch?.matched &&
+            inquiryMatch.member?.dependantCode === m.dependantCode &&
+            !dependantCodesEqual(inquiryDep, m.dependantCode);
+          return (
+            <div
+              key={`${m.dependantCode}-${m.idNumber ?? ''}`}
+              className={`rounded-lg border px-3 py-2 text-xs ${
+                isMatch
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                  : 'border-slate-100 bg-slate-50 text-slate-700'
+              }`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="font-semibold text-slate-800">
+                  Dep {m.dependantCode}
+                  {[m.firstName, m.lastName].filter(Boolean).join(' ') || '—'}
+                  {isMatch ? (
+                    <span className="ml-2 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-800">
+                      Match
+                    </span>
+                  ) : null}
+                </p>
+                {onApplyMember ? (
+                  <button
+                    type="button"
+                    onClick={() => onApplyMember(m)}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600 hover:border-cyan-300 hover:text-cyan-800"
+                  >
+                    Use on claim
+                  </button>
+                ) : null}
+              </div>
+              <p className="mt-1 text-slate-500">
+                {m.dateOfBirth ? `DOB ${m.dateOfBirth}` : ''}
+                {m.idNumber ? ` · ID ${m.idNumber}` : ''}
+                {m.plan?.joinDate ? ` · Joined ${m.plan.joinDate}` : ''}
+              </p>
+              {depMismatch ? (
+                <p className="mt-1 text-amber-800">
+                  Scheme uses dep {m.dependantCode} (you entered {inquiryDep}) — claim fields were updated.
+                </p>
+              ) : null}
+              {m.statusDescription ? (
+                <p className="mt-1 font-medium text-amber-800">{m.statusDescription}</p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function getEmptyClaimPayload(): BillingClaimCreatePayload {
   return {
+    hnet: '',
     externalReference: '',
     patient: {
       firstName: '',
@@ -132,13 +330,11 @@ function getEmptyClaimPayload(): BillingClaimCreatePayload {
     lineItems: [
       {
         procedureCode: '',
+        nappiCode: '',
         description: '',
         quantity: 1,
-<<<<<<< HEAD
         baseTariffCents: 0,
         tariffPercent: 100,
-=======
->>>>>>> origin/staging
         unitPriceCents: 0,
         totalPriceCents: 0,
         serviceDate: getTodayIsoDate(),
@@ -290,7 +486,6 @@ function formatMoneyOrDash(cents?: number | null): string {
   return formatCents(cents);
 }
 
-<<<<<<< HEAD
 function clampTariffPercent(value: number): number {
   if (!Number.isFinite(value)) return 100;
   if (value < 1) return 1;
@@ -454,6 +649,19 @@ function ClaimFinancialsPanel({ claim }: { claim: StoredClaimRecord }) {
           label="Average line value"
           value={formatMoneyOrDash(averageLineValue)}
         />
+        {typeof claim.billableCents === 'number' && !claim.reversed ? (
+          <FinancialMetric
+            label="Billable amount"
+            value={formatMoneyOrDash(claim.billableCents)}
+            tone="positive"
+          />
+        ) : null}
+        {claim.hnet ? (
+          <FinancialMetric label="HNET" value={claim.hnet} />
+        ) : null}
+        {claim.planCode ? (
+          <FinancialMetric label="Plan" value={claim.planCode} />
+        ) : null}
       </div>
       {claim.reversed ? (
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
@@ -489,6 +697,9 @@ function PracticeFinancialsPanel({ claims }: { claims: StoredClaimRecord[] }) {
   const totalClaims = claims.length;
   const activeClaims = claims.filter((c) => !c.reversed);
   const acceptedClaims = activeClaims.filter((c) => c.status === 'accepted').length;
+  const partiallyAcceptedClaims = activeClaims.filter(
+    (c) => c.status === 'partially_accepted',
+  ).length;
   const rejectedClaims = activeClaims.filter((c) => c.status === 'rejected').length;
   const pendingClaims = activeClaims.filter((c) => c.status === 'pending').length;
   const reversedClaims = claims.filter((c) => c.reversed).length;
@@ -578,8 +789,9 @@ function PracticeFinancialsPanel({ claims }: { claims: StoredClaimRecord[] }) {
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-6">
         <FinancialMetric label="Accepted" value={String(acceptedClaims)} />
+        <FinancialMetric label="Partial" value={String(partiallyAcceptedClaims)} />
         <FinancialMetric label="Rejected" value={String(rejectedClaims)} />
         <FinancialMetric label="Pending" value={String(pendingClaims)} />
         <FinancialMetric label="Reversed" value={String(reversedClaims)} />
@@ -666,8 +878,12 @@ function PracticeClaimFinancialsList({ claims }: { claims: StoredClaimRecord[] }
                   >
                     {formatMoneyOrDash(outstanding)}
                   </p>
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    {claim.reversed ? 'reversed' : claim.status}
+                  <p
+                    className={`text-xs font-bold uppercase tracking-wider ${claim.reversed ? 'text-rose-700' : 'text-slate-500'}`}
+                  >
+                    {claim.reversed
+                      ? 'reversed'
+                      : formatClaimStatusLabel(claim.status)}
                     {claim.reversalStatus ? ` (${claim.reversalStatus})` : ''}
                   </p>
                 </div>
@@ -686,8 +902,6 @@ function PracticeClaimFinancialsList({ claims }: { claims: StoredClaimRecord[] }
   );
 }
 
-=======
->>>>>>> origin/staging
 function renderLineItemsSummary(claim: StoredClaimRecord) {
   const items = claim.lineItemsSummary || [];
   if (!items.length) return null;
@@ -758,6 +972,7 @@ function compactClaimPayload(payload: BillingClaimCreatePayload): BillingClaimCr
 
   return {
     ...payload,
+    hnet: trimOrUndefined(payload.hnet),
     externalReference: trimOrUndefined(payload.externalReference),
     patient: {
       ...payload.patient,
@@ -780,8 +995,12 @@ function compactClaimPayload(payload: BillingClaimCreatePayload): BillingClaimCr
     })),
     lineItems: payload.lineItems.map((li) => ({
       ...li,
+      nappiCode: trimOrUndefined(li.nappiCode),
+      medicineQuantity:
+        typeof li.medicineQuantity === 'number' && li.medicineQuantity > 0
+          ? li.medicineQuantity
+          : undefined,
       description: trimOrUndefined(li.description),
-<<<<<<< HEAD
       baseTariffCents:
         typeof li.baseTariffCents === 'number' && li.baseTariffCents > 0
           ? Math.round(li.baseTariffCents)
@@ -790,8 +1009,6 @@ function compactClaimPayload(payload: BillingClaimCreatePayload): BillingClaimCr
         typeof li.tariffPercent === 'number' && li.tariffPercent > 0
           ? clampTariffPercent(li.tariffPercent)
           : undefined,
-=======
->>>>>>> origin/staging
     })),
     other: hasOther ? compactOther : undefined,
   };
@@ -804,11 +1021,7 @@ function compactEligibilityPayload(p: BillingEligibilityPayload): BillingEligibi
   };
 
   return {
-<<<<<<< HEAD
     requestType: normalizeEligibilityRequestType(compact(p.requestType)),
-=======
-    requestType: compact(p.requestType) || 'normal',
->>>>>>> origin/staging
     memberNumber: compact(p.memberNumber),
     serviceDate: p.serviceDate,
     schemeCode: compact(p.schemeCode)?.toUpperCase(),
@@ -844,6 +1057,11 @@ function ClaimsTab({
   const pollTimerRef = useRef<number | null>(null);
   const [patientClaims, setPatientClaims] = useState<unknown[] | null>(null);
   const [patientClaimsLoading, setPatientClaimsLoading] = useState(false);
+  const [patientEligibilityChecks, setPatientEligibilityChecks] = useState<unknown[] | null>(null);
+  const [patientEligibilityLoading, setPatientEligibilityLoading] = useState(false);
+  const [lastClaimSubmitResult, setLastClaimSubmitResult] = useState<ClaimResultDto | null>(null);
+  const [claimsMemberSearchInput, setClaimsMemberSearchInput] = useState('');
+  const [claimsMemberFilter, setClaimsMemberFilter] = useState('');
   const [expandedPatientHistoryKey, setExpandedPatientHistoryKey] = useState<string | null>(null);
   const [hiddenClaimIds, setHiddenClaimIds] = useState<string[]>(
     () => readJson<string[]>(LS_HIDDEN_CLAIM_IDS) || []
@@ -855,29 +1073,24 @@ function ClaimsTab({
   });
 
   const [reversalTx, setReversalTx] = useState('');
-<<<<<<< HEAD
   const [reversalLoading, setReversalLoading] = useState(false);
   const [reversalError, setReversalError] = useState<string | null>(null);
   const [selectedReversalClaim, setSelectedReversalClaim] = useState<StoredClaimRecord | null>(null);
-=======
->>>>>>> origin/staging
   const [reversalPayload, setReversalPayload] = useState<BillingClaimCreatePayload>(() => {
     const saved = readJson<BillingClaimCreatePayload>(LS_LAST_SUBMIT);
     return saved ?? getEmptyClaimPayload();
   });
   const [claimEligibilityResult, setClaimEligibilityResult] = useState<EligibilityResponseDto | null>(null);
   const [claimEligibilityLoading, setClaimEligibilityLoading] = useState(false);
-<<<<<<< HEAD
   const [eligibilityRequestType, setEligibilityRequestType] = useState<EligibilityRequestType>(() => {
     const saved = readJson<BillingEligibilityPayload>(LS_LAST_ELIGIBILITY);
     return normalizeEligibilityRequestType(saved?.requestType);
   });
   const [lastCheckedEligibilityType, setLastCheckedEligibilityType] = useState<EligibilityRequestType | null>(null);
+  const [lastEligibilityInquiryDep, setLastEligibilityInquiryDep] = useState('');
   const selectedEligibilityOption =
     ELIGIBILITY_REQUEST_TYPE_OPTIONS.find((opt) => opt.value === eligibilityRequestType) ??
     ELIGIBILITY_REQUEST_TYPE_OPTIONS[0];
-=======
->>>>>>> origin/staging
 
   const applyPatientToClaim = (base: BillingClaimCreatePayload): BillingClaimCreatePayload => {
     if (!patient) return base;
@@ -916,10 +1129,7 @@ function ClaimsTab({
 
   React.useEffect(() => {
     setClaimEligibilityResult(null);
-<<<<<<< HEAD
     setLastCheckedEligibilityType(null);
-=======
->>>>>>> origin/staging
   }, [
     submitPayload.patient.memberNumber,
     submitPayload.patient.dependantCode,
@@ -935,10 +1145,7 @@ function ClaimsTab({
     submitPayload.lineItems.map((li) => li.serviceDate).join('|'),
     patient?.schemeCode,
     userSettings?.billing?.schemeCode,
-<<<<<<< HEAD
     eligibilityRequestType,
-=======
->>>>>>> origin/staging
   ]);
 
   const canSubmit = useMemo(() => {
@@ -951,16 +1158,36 @@ function ClaimsTab({
     return !!(hasPatient && hasMember && hasPlan && hasProvider && hasDx && hasLine);
   }, [submitPayload]);
 
-  const refreshClaims = async () => {
+  const refreshClaims = async (memberNumberOverride?: string) => {
     setClaimsLoading(true);
     try {
-      const data = await billingGetClaims({ limit: 50, offset: 0 });
+      const member =
+        memberNumberOverride !== undefined
+          ? memberNumberOverride.trim()
+          : claimsMemberFilter.trim();
+      const data = await billingGetClaims({
+        limit: 50,
+        offset: 0,
+        memberNumber: member || undefined,
+      });
       setClaims(data);
     } catch (e) {
       onToast(e instanceof Error ? e.message : 'Failed to load claims.', 'error');
     } finally {
       setClaimsLoading(false);
     }
+  };
+
+  const applyClaimsMemberSearch = () => {
+    const trimmed = claimsMemberSearchInput.trim();
+    setClaimsMemberFilter(trimmed);
+    void refreshClaims(trimmed);
+  };
+
+  const clearClaimsMemberSearch = () => {
+    setClaimsMemberSearchInput('');
+    setClaimsMemberFilter('');
+    void refreshClaims('');
   };
 
   const refreshPatientClaims = async () => {
@@ -977,6 +1204,26 @@ function ClaimsTab({
     } finally {
       setPatientClaimsLoading(false);
     }
+  };
+
+  const refreshPatientEligibility = async () => {
+    if (!patient?.id) {
+      setPatientEligibilityChecks(null);
+      return;
+    }
+    setPatientEligibilityLoading(true);
+    try {
+      const res = await fetchPatientBillingEligibility(patient.id);
+      setPatientEligibilityChecks(res.checks || []);
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : 'Failed to load patient eligibility history.', 'error');
+    } finally {
+      setPatientEligibilityLoading(false);
+    }
+  };
+
+  const refreshPatientBillingHistory = async () => {
+    await Promise.all([refreshPatientClaims(), refreshPatientEligibility()]);
   };
 
   React.useEffect(() => {
@@ -998,10 +1245,15 @@ function ClaimsTab({
       if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     };
-  }, []);
+  }, [claimsMemberFilter]);
 
   React.useEffect(() => {
-    refreshPatientClaims().catch(() => {});
+    if (!patient?.id) {
+      setPatientClaims(null);
+      setPatientEligibilityChecks(null);
+      return;
+    }
+    refreshPatientBillingHistory().catch(() => {});
   }, [patient?.id]);
 
   React.useEffect(() => {
@@ -1013,7 +1265,6 @@ function ClaimsTab({
     [claims, hiddenClaimIds]
   );
 
-<<<<<<< HEAD
   const reversalEligibleClaims = useMemo(
     () => visibleClaims.filter((c) => !c.reversed && !!c.transactionNumber),
     [visibleClaims]
@@ -1029,8 +1280,6 @@ function ClaimsTab({
     }
   }, [reversalEligibleClaims, reversalTx]);
 
-=======
->>>>>>> origin/staging
   const selectAndLoadClaim = async (id: string) => {
     if (expandedClaimId === id) {
       setExpandedClaimId(null);
@@ -1060,8 +1309,18 @@ function ClaimsTab({
         <p><span className="font-semibold text-slate-600">Member:</span> {claim.memberNumber || '—'}</p>
         <p><span className="font-semibold text-slate-600">Dependant:</span> {claim.dependantCode || '—'}</p>
         <p><span className="font-semibold text-slate-600">Transaction:</span> {claim.transactionNumber || '—'}</p>
-        <p><span className="font-semibold text-slate-600">Status:</span> {claim.reversed ? 'reversed' : claim.status}</p>
-<<<<<<< HEAD
+        <p><span className="font-semibold text-slate-600">HNET:</span> {claim.hnet || '—'}</p>
+        <p><span className="font-semibold text-slate-600">Plan:</span> {claim.planCode || '—'}</p>
+        <p>
+          <span className="font-semibold text-slate-600">Status:</span>{' '}
+          {claim.reversed ? 'reversed' : formatClaimStatusLabel(claim.status)}
+        </p>
+        {typeof claim.billableCents === 'number' && !claim.reversed ? (
+          <p>
+            <span className="font-semibold text-slate-600">Billable:</span>{' '}
+            {formatMoneyOrDash(claim.billableCents)}
+          </p>
+        ) : null}
         {claim.reversed && claim.reversalStatus ? (
           <p><span className="font-semibold text-slate-600">Reversal:</span> {claim.reversalStatus}</p>
         ) : null}
@@ -1088,12 +1347,6 @@ function ClaimsTab({
         ) : null}
       </div>
       <ClaimFinancialsPanel claim={claim} />
-=======
-        <p><span className="font-semibold text-slate-600">Created:</span> {new Date(claim.createdAt).toLocaleString()}</p>
-        <p><span className="font-semibold text-slate-600">Claimed:</span> {formatMoneyOrDash(claim.totalClaimedCents)}</p>
-        <p><span className="font-semibold text-slate-600">Paid:</span> {formatMoneyOrDash(claim.totalPaidCents)}</p>
-      </div>
->>>>>>> origin/staging
       {claim.messages?.length ? (
         <div className="mt-3">
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Response messages</p>
@@ -1104,7 +1357,6 @@ function ClaimsTab({
           </ul>
         </div>
       ) : null}
-<<<<<<< HEAD
       {claim.reversed && claim.reversalMessages?.length ? (
         <div className="mt-3">
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Reversal messages</p>
@@ -1115,8 +1367,9 @@ function ClaimsTab({
           </ul>
         </div>
       ) : null}
-=======
->>>>>>> origin/staging
+      {claim.lineItemResults?.length ? (
+        <ClaimLineItemResultsPanel results={claim.lineItemResults} />
+      ) : null}
       {renderLineItemsSummary(claim)}
     </div>
   );
@@ -1144,6 +1397,11 @@ function ClaimsTab({
     [patientClaims]
   );
 
+  const recentPatientEligibility = useMemo(
+    () => ((patientEligibilityChecks || []).slice(-10).reverse()),
+    [patientEligibilityChecks]
+  );
+
   const renderPatientHistoryRecord = (entry: unknown, idx: number) => {
     const row = asObject(entry);
     const request = asObject(row?.claimRequest);
@@ -1156,7 +1414,13 @@ function ClaimsTab({
     const savedAt = asString(row?.savedAt) || asString(row?.createdAt);
     const memberNumber = asString(requestPatient?.memberNumber) || asString(row?.memberNumber);
     const dependantCode = asString(requestPatient?.dependantCode) || asString(row?.dependantCode);
-    const planCode = asString(requestPatient?.planCode);
+    const planCode =
+      asString(result?.planCode) ||
+      asString(requestPatient?.planCode);
+    const hnet = asString(result?.hnet);
+    const lineItemResults = parseStoredLineItemResults(result?.lineItemResults);
+    const billableCents =
+      asNumber(result?.billableCents) ?? resolveBillableCents({ lineItemResults });
     const messages = asStringArray(result?.messages).concat(asStringArray(row?.messages));
     const patientFirstName = asString(requestPatient?.firstName) || asString(row?.patientFirstName);
     const patientLastName = asString(requestPatient?.lastName) || asString(row?.patientLastName);
@@ -1167,7 +1431,7 @@ function ClaimsTab({
       .filter((item): item is Record<string, unknown> => Boolean(item));
     const claimedFromLineItems = lineItems.reduce((sum, item) => sum + (asNumber(item.totalPriceCents) || 0), 0);
     const totalClaimedCents = typeof claimedFromRow === 'number' ? claimedFromRow : (claimedFromLineItems > 0 ? claimedFromLineItems : undefined);
-    const key = `${savedAt || 'entry'}-${transactionNumber || status}-${idx}`;
+    const key = `claim-${savedAt || 'entry'}-${transactionNumber || status}-${idx}`;
     const isExpanded = expandedPatientHistoryKey === key;
 
     return (
@@ -1181,8 +1445,10 @@ function ClaimsTab({
             <p className="text-sm font-semibold text-slate-800">
               {transactionNumber || `Saved claim ${idx + 1}`}
             </p>
-            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-600">
-              {status}
+            <span
+              className={`rounded-full border bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${claimStatusBadgeClass(status)}`}
+            >
+              {formatClaimStatusLabel(status)}
             </span>
           </div>
           <p className="mt-1 text-xs text-slate-500">
@@ -1200,7 +1466,14 @@ function ClaimsTab({
               <p><span className="font-semibold text-slate-600">Created:</span> {savedAt ? new Date(savedAt).toLocaleString() : '—'}</p>
               <p><span className="font-semibold text-slate-600">Claimed:</span> {formatMoneyOrDash(totalClaimedCents)}</p>
               <p><span className="font-semibold text-slate-600">Paid:</span> {formatMoneyOrDash(paidFromRow)}</p>
+              <p><span className="font-semibold text-slate-600">HNET:</span> {hnet || '—'}</p>
               <p><span className="font-semibold text-slate-600">Plan code:</span> {planCode || '—'}</p>
+              {typeof billableCents === 'number' ? (
+                <p>
+                  <span className="font-semibold text-slate-600">Billable:</span>{' '}
+                  {formatMoneyOrDash(billableCents)}
+                </p>
+              ) : null}
             </div>
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Response messages</p>
@@ -1216,7 +1489,7 @@ function ClaimsTab({
             </div>
             {lineItems.length > 0 ? (
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Line items</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Requested line items</p>
                 <div className="mt-1 space-y-1.5">
                   {lineItems.map((li, liIdx) => (
                     <div key={`${key}-li-${liIdx}`} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
@@ -1230,6 +1503,77 @@ function ClaimsTab({
                   ))}
                 </div>
               </div>
+            ) : null}
+            {lineItemResults.length > 0 ? (
+              <ClaimLineItemResultsPanel results={lineItemResults} />
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderPatientEligibilityHistoryRecord = (entry: unknown, idx: number) => {
+    const row = asObject(entry);
+    const request = asObject(row?.eligibilityRequest);
+    const result = asObject(row?.eligibilityResult);
+    const savedAt = asString(row?.savedAt) || asString(row?.createdAt);
+    const requestType = normalizeEligibilityRequestType(asString(request?.requestType));
+    const optionLabel =
+      ELIGIBILITY_REQUEST_TYPE_OPTIONS.find((opt) => opt.value === requestType)?.label ??
+      requestType;
+    const status = asString(result?.status) || 'unknown';
+    const inquiryDep = asString(request?.dependantCode);
+    const familyMembers = parseStoredFamilyMembers(result?.familyMembers);
+    const verifiedPatient = parseStoredFamilyMembers(
+      result?.verifiedPatient ? [result.verifiedPatient] : [],
+    )[0];
+    const inquiryMatch = parseStoredInquiryMatch(result?.inquiryMatch);
+    const key = `elig-${savedAt || 'entry'}-${status}-${idx}`;
+    const isExpanded = expandedPatientHistoryKey === key;
+
+    return (
+      <div key={key} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <button
+          type="button"
+          onClick={() => setExpandedPatientHistoryKey((prev) => (prev === key ? null : key))}
+          className="w-full text-left"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-slate-800">{optionLabel}</p>
+            <span
+              className={`rounded-full border bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${
+                status === 'eligible'
+                  ? 'border-emerald-200 text-emerald-800'
+                  : status === 'ineligible'
+                    ? 'border-rose-200 text-rose-700'
+                    : 'border-amber-200 text-amber-800'
+              }`}
+            >
+              {status}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            {savedAt ? new Date(savedAt).toLocaleString() : 'No timestamp'}
+            {inquiryDep ? ` • Checked dep ${inquiryDep}` : ''}
+          </p>
+        </button>
+        {isExpanded ? (
+          <div className="mt-3 text-xs text-slate-700">
+            {asString(result?.hnet) ? (
+              <p>
+                <span className="font-semibold text-slate-600">HNET:</span> {asString(result?.hnet)}
+              </p>
+            ) : null}
+            {requestType === 'normal' && verifiedPatient ? (
+              <VerifiedPatientPanel patient={verifiedPatient} />
+            ) : null}
+            {requestType === 'family' && familyMembers.length ? (
+              <FamilyMembersPanel
+                members={familyMembers}
+                inquiryDependantCode={inquiryDep}
+                inquiryMatch={inquiryMatch}
+              />
             ) : null}
           </div>
         ) : null}
@@ -1245,14 +1589,10 @@ function ClaimsTab({
     onToast('Claim removed from this list view.', 'info');
   };
 
-<<<<<<< HEAD
   const buildEligibilityFromClaim = (
     claimPayload: BillingClaimCreatePayload,
     requestType: EligibilityRequestType = eligibilityRequestType,
   ): BillingEligibilityPayload => {
-=======
-  const buildEligibilityFromClaim = (claimPayload: BillingClaimCreatePayload): BillingEligibilityPayload => {
->>>>>>> origin/staging
     const name = splitName(`${claimPayload.patient.firstName} ${claimPayload.patient.lastName}`.trim() || patient?.name || '');
     const firstServiceDate = claimPayload.lineItems.find((li) => li.serviceDate)?.serviceDate || getTodayIsoDate();
     const resolvedPlanCode =
@@ -1276,11 +1616,7 @@ function ClaimsTab({
       '';
 
     return {
-<<<<<<< HEAD
       requestType,
-=======
-      requestType: 'normal',
->>>>>>> origin/staging
       memberNumber: resolvedMemberNumber,
       dependantCode: claimPayload.patient.dependantCode || patient?.dependantCode || '',
       patientDateOfBirth: claimPayload.patient.dateOfBirth || '',
@@ -1297,11 +1633,26 @@ function ClaimsTab({
     };
   };
 
+  const applyFamilyMemberToClaim = (member: FamilyMemberDto) => {
+    setSubmitPayload((prev) => ({
+      ...prev,
+      patient: {
+        ...prev.patient,
+        dependantCode: member.dependantCode || prev.patient.dependantCode,
+        firstName: member.firstName || prev.patient.firstName,
+        lastName: member.lastName || prev.patient.lastName,
+        dateOfBirth: member.dateOfBirth || prev.patient.dateOfBirth,
+        idNumber: member.idNumber || prev.patient.idNumber,
+        initials: member.initials || prev.patient.initials,
+      },
+    }));
+  };
+
   const checkEligibilityForClaim = async () => {
-<<<<<<< HEAD
     const requestPayload = compactEligibilityPayload(
       buildEligibilityFromClaim(submitPayload, eligibilityRequestType),
     );
+    setLastEligibilityInquiryDep(requestPayload.dependantCode || '');
     const hasMemberNumber = !!(requestPayload.memberNumber ?? '').trim();
     const hasPatientId = !!requestPayload.patientIdNumber?.trim();
     const hasMemberOrId = hasMemberNumber || hasPatientId;
@@ -1320,12 +1671,6 @@ function ClaimsTab({
     }
     if (!memberRequired && !hasMemberOrId) {
       onToast('Eligibility needs either a member number or patient ID number.', 'error');
-=======
-    const requestPayload = compactEligibilityPayload(buildEligibilityFromClaim(submitPayload));
-    const hasMemberOrId = !!(requestPayload.memberNumber ?? '').trim() || !!requestPayload.patientIdNumber?.trim();
-    if (!requestPayload.serviceDate || !requestPayload.schemeCode?.trim() || !requestPayload.planCode?.trim() || !hasMemberOrId) {
-      onToast('Eligibility needs service date, scheme code, plan code, and either member number or patient ID number.', 'error');
->>>>>>> origin/staging
       return;
     }
     setClaimEligibilityLoading(true);
@@ -1333,11 +1678,51 @@ function ClaimsTab({
     try {
       const res = await billingCheckEligibility(requestPayload);
       setClaimEligibilityResult(res);
-<<<<<<< HEAD
       setLastCheckedEligibilityType(requestPayload.requestType as EligibilityRequestType);
-=======
->>>>>>> origin/staging
-      onToast(`Eligibility: ${res.status}.`, res.status === 'eligible' ? 'success' : 'info');
+
+      const matchedMember = res.inquiryMatch?.matched ? res.inquiryMatch.member : undefined;
+      const depEntered = requestPayload.dependantCode || '';
+      if (matchedMember && depEntered && !dependantCodesEqual(depEntered, matchedMember.dependantCode)) {
+        onToast(
+          `FAMCHECK matched by ${res.inquiryMatch?.matchReason ?? 'inquiry'}; dependant updated to ${matchedMember.dependantCode}.`,
+          'info',
+        );
+      }
+
+      setSubmitPayload((prev) => {
+        const basePatient = matchedMember
+          ? {
+              ...prev.patient,
+              dependantCode: matchedMember.dependantCode || prev.patient.dependantCode,
+              firstName: matchedMember.firstName || prev.patient.firstName,
+              lastName: matchedMember.lastName || prev.patient.lastName,
+              dateOfBirth: matchedMember.dateOfBirth || prev.patient.dateOfBirth,
+              idNumber: matchedMember.idNumber || prev.patient.idNumber,
+              initials: matchedMember.initials || prev.patient.initials,
+            }
+          : prev.patient;
+        return {
+          ...prev,
+          hnet: res.hnet || prev.hnet,
+          patient: {
+            ...basePatient,
+            planCode: res.planCode || requestPayload.planCode || basePatient.planCode,
+            memberNumber:
+              res.memberNumber || requestPayload.memberNumber || basePatient.memberNumber,
+          },
+        };
+      });
+      const hnetHint = res.hnet ? ` HNET ${res.hnet} saved for claim.` : '';
+      const famHint =
+        requestPayload.requestType === 'family' &&
+        res.familyMembers?.length &&
+        !res.inquiryMatch?.matched
+          ? ' No dependant match — confirm ID or pick from roster.'
+          : '';
+      onToast(
+        `Eligibility: ${res.status}.${hnetHint}${famHint}`,
+        res.status === 'eligible' ? 'success' : 'info',
+      );
       writeJson(LS_LAST_ELIGIBILITY, requestPayload);
       if (patient?.id) {
         await appendPatientBillingEligibility(patient.id, {
@@ -1346,6 +1731,7 @@ function ClaimsTab({
           eligibilityRequest: requestPayload,
           eligibilityResult: res,
         });
+        await refreshPatientEligibility();
       }
     } catch (e) {
       onToast(e instanceof Error ? e.message : 'Eligibility check failed.', 'error');
@@ -1365,12 +1751,25 @@ function ClaimsTab({
     }
     try {
       const payloadToSubmit = compactClaimPayload(submitPayload);
-      const result = await billingSubmitClaim(payloadToSubmit);
-      onToast(`Claim ${result.status}.`, result.status === 'accepted' ? 'success' : 'info');
-      writeJson(LS_LAST_SUBMIT, payloadToSubmit);
+      const payloadWithHnet: BillingClaimCreatePayload = {
+        ...payloadToSubmit,
+        hnet: payloadToSubmit.hnet || claimEligibilityResult?.hnet,
+      };
+      const result = await billingSubmitClaim(payloadWithHnet);
+      setLastClaimSubmitResult(result);
+      const billable = resolveBillableCents(result);
+      const statusLabel = formatClaimStatusLabel(result.status);
+      const billableHint =
+        typeof billable === 'number' ? ` Billable ${formatCents(billable)}.` : '';
+      const hnetHint = result.hnet ? ` HNET ${result.hnet}.` : '';
+      onToast(
+        `Claim ${statusLabel}.${billableHint}${hnetHint}`,
+        isClaimStatusBillable(result.status) ? 'success' : 'info',
+      );
+      writeJson(LS_LAST_SUBMIT, payloadWithHnet);
       if (result.transactionNumber) {
         const existing = readJson<Record<string, BillingClaimCreatePayload>>(LS_SUBMITTED_BY_TX) || {};
-        existing[result.transactionNumber] = payloadToSubmit;
+        existing[result.transactionNumber] = payloadWithHnet;
         writeJson(LS_SUBMITTED_BY_TX, existing);
       }
 
@@ -1378,7 +1777,7 @@ function ClaimsTab({
         await appendPatientBillingClaim(patient.id, {
           savedAt: new Date().toISOString(),
           patientId: patient.id,
-          claimRequest: payloadToSubmit,
+          claimRequest: payloadWithHnet,
           claimResult: result,
         });
         await refreshPatientClaims();
@@ -1390,7 +1789,6 @@ function ClaimsTab({
     }
   };
 
-<<<<<<< HEAD
   const loadReversalPayloadForTx = async (tx: string) => {
     const trimmed = tx.trim();
     if (!trimmed) {
@@ -1450,7 +1848,12 @@ function ClaimsTab({
         onToast(msg, 'error');
       } else {
         setReversalError(null);
-        onToast(`Reversal ${result.status}.`, result.status === 'accepted' ? 'success' : 'info');
+        onToast(
+          `Reversal ${formatClaimStatusLabel(result.status)}.`,
+          result.status === 'accepted' || result.status === 'partially_accepted'
+            ? 'success'
+            : 'info',
+        );
       }
       if (expandedClaimId) {
         await selectAndLoadClaim(expandedClaimId);
@@ -1462,20 +1865,6 @@ function ClaimsTab({
       onToast(msg, 'error');
     } finally {
       setReversalLoading(false);
-=======
-  const reverseClaim = async () => {
-    if (!reversalTx.trim()) {
-      onToast('Transaction number is required for reversal.', 'error');
-      return;
-    }
-    try {
-      const payloadToSubmit = compactClaimPayload(reversalPayload);
-      const result = await billingReverseClaim({ ...payloadToSubmit, transactionNumber: reversalTx.trim() });
-      onToast(`Reversal ${result.status}.`, result.status === 'accepted' ? 'success' : 'info');
-      await refreshClaims();
-    } catch (e) {
-      onToast(e instanceof Error ? e.message : 'Failed to reverse claim.', 'error');
->>>>>>> origin/staging
     }
   };
 
@@ -1487,11 +1876,7 @@ function ClaimsTab({
         right={
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
-<<<<<<< HEAD
               {(['list', 'submit', 'reverse', 'financials'] as ClaimsSubTab[]).map((name) => (
-=======
-              {(['list', 'submit', 'reverse'] as ClaimsSubTab[]).map((name) => (
->>>>>>> origin/staging
                 <button
                   key={name}
                   type="button"
@@ -1515,8 +1900,58 @@ function ClaimsTab({
       >
         {subTab === 'list' && (
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Recent claims</p>
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Recent claims</p>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <Label>Search by member number</Label>
+                    <Input
+                      value={claimsMemberSearchInput}
+                      onChange={(e) => setClaimsMemberSearchInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          applyClaimsMemberSearch();
+                        }
+                      }}
+                      placeholder="e.g. MK1050533"
+                    />
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <SmallButton onClick={applyClaimsMemberSearch} disabled={claimsLoading}>
+                      Search
+                    </SmallButton>
+                    <SmallButton
+                      variant="secondary"
+                      onClick={clearClaimsMemberSearch}
+                      disabled={claimsLoading || (!claimsMemberFilter && !claimsMemberSearchInput)}
+                    >
+                      Clear
+                    </SmallButton>
+                    {patient?.memberNumber || patient?.medicalAidNumber ? (
+                      <SmallButton
+                        variant="secondary"
+                        onClick={() => {
+                          const member =
+                            patient.memberNumber || patient.medicalAidNumber || '';
+                          setClaimsMemberSearchInput(member);
+                          setClaimsMemberFilter(member);
+                          void refreshClaims(member);
+                        }}
+                      >
+                        Use patient
+                      </SmallButton>
+                    ) : null}
+                  </div>
+                </div>
+                {claimsMemberFilter ? (
+                  <p className="mt-2 text-xs text-slate-600">
+                    Showing claims for member{' '}
+                    <span className="font-semibold">{claimsMemberFilter}</span>
+                  </p>
+                ) : null}
+              </div>
               {detailLoading ? (
                 <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
                   <RefreshCw size={14} className="animate-spin" />
@@ -1527,7 +1962,11 @@ function ClaimsTab({
             {claims === null ? (
               <p className="text-sm text-slate-500">Loading claims…</p>
             ) : visibleClaims.length === 0 ? (
-              <p className="text-sm text-slate-500">No claims found.</p>
+              <p className="text-sm text-slate-500">
+                {claimsMemberFilter
+                  ? `No claims found for member ${claimsMemberFilter}.`
+                  : 'No claims found.'}
+              </p>
             ) : (
               <div className="space-y-2">
                 {visibleClaims.map(c => {
@@ -1543,21 +1982,22 @@ function ClaimsTab({
                         >
                           <p className="truncate text-sm font-semibold text-slate-800">{c.patientLastName || '—'}</p>
                           <p className="mt-1 truncate text-xs text-slate-500">
-                            Member: {c.memberNumber} • Tx: {c.transactionNumber || '—'} • Items:{' '}
-                            {c.totalLineItems ?? c.lineItemsSummary?.length ?? '—'}
-<<<<<<< HEAD
+                            Member: {c.memberNumber} • Plan: {c.planCode || '—'} • Tx:{' '}
+                            {c.transactionNumber || '—'}
+                            {typeof c.billableCents === 'number'
+                              ? ` • Billable ${formatCents(c.billableCents)}`
+                              : ''}
                             {c.reversalStatus ? ` • Reversal: ${c.reversalStatus}` : ''}
-=======
->>>>>>> origin/staging
                           </p>
                         </button>
                         <div className="flex items-center gap-2">
                           <span
-                            className={`shrink-0 rounded-full border bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${
-                              c.reversed ? 'border-rose-200 text-rose-700' : 'border-slate-200 text-slate-500'
-                            }`}
+                            className={`shrink-0 rounded-full border bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${claimStatusBadgeClass(
+                              c.status,
+                              c.reversed,
+                            )}`}
                           >
-                            {c.reversed ? 'reversed' : c.status}
+                            {c.reversed ? 'reversed' : formatClaimStatusLabel(c.status)}
                           </span>
                           <button
                             type="button"
@@ -1578,7 +2018,6 @@ function ClaimsTab({
           </div>
         )}
 
-<<<<<<< HEAD
         {subTab === 'financials' && (
           <div className="space-y-3">
             {claimsLoading && !claims ? (
@@ -1592,32 +2031,59 @@ function ClaimsTab({
           </div>
         )}
 
-=======
->>>>>>> origin/staging
         {subTab === 'list' && patient?.id && (
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Patient claim history</p>
-                <p className="text-sm font-semibold text-slate-800">{patient.name}</p>
-              </div>
-              {patientClaimsLoading ? (
-                <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
-                  <RefreshCw size={14} className="animate-spin" />
-                  Loading…
-                </span>
-              ) : null}
-            </div>
-            <div className="mt-3">
-              {patientClaims === null ? (
-                <p className="text-sm text-slate-500">Select a patient to see saved claim history.</p>
-              ) : patientClaims.length === 0 ? (
-                <p className="text-sm text-slate-500">No saved claims for this patient yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {recentPatientClaims.map((entry, idx) => renderPatientHistoryRecord(entry, idx))}
+          <div className="mt-4 space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Patient claim history</p>
+                  <p className="text-sm font-semibold text-slate-800">{patient.name}</p>
                 </div>
-              )}
+                {patientClaimsLoading ? (
+                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
+                    <RefreshCw size={14} className="animate-spin" />
+                    Loading…
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-3">
+                {patientClaims === null ? (
+                  <p className="text-sm text-slate-500">Select a patient to see saved claim history.</p>
+                ) : patientClaims.length === 0 ? (
+                  <p className="text-sm text-slate-500">No saved claims for this patient yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {recentPatientClaims.map((entry, idx) => renderPatientHistoryRecord(entry, idx))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Patient eligibility history</p>
+                  <p className="text-sm text-slate-600">FAMCHECK roster, verified patient, and inquiry match</p>
+                </div>
+                {patientEligibilityLoading ? (
+                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
+                    <RefreshCw size={14} className="animate-spin" />
+                    Loading…
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-3">
+                {patientEligibilityChecks === null ? (
+                  <p className="text-sm text-slate-500">Loading eligibility checks…</p>
+                ) : recentPatientEligibility.length === 0 ? (
+                  <p className="text-sm text-slate-500">No saved eligibility checks for this patient yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {recentPatientEligibility.map((entry, idx) =>
+                      renderPatientEligibilityHistoryRecord(entry, idx),
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1626,7 +2092,6 @@ function ClaimsTab({
           <div className="mt-1">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Submit new claim</p>
             <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-<<<<<<< HEAD
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Eligibility check</p>
@@ -1659,14 +2124,6 @@ function ClaimsTab({
                         : ' Member number or patient ID number can be used for this check type.'}
                     </p>
                   </div>
-=======
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Eligibility check</p>
-                  <p className="text-sm text-slate-600">
-                    Check member eligibility for the current claim details before submission.
-                  </p>
->>>>>>> origin/staging
                 </div>
                 <SmallButton onClick={checkEligibilityForClaim} disabled={claimEligibilityLoading}>
                   {claimEligibilityLoading ? <RefreshCw size={16} className="animate-spin" /> : null}
@@ -1684,7 +2141,6 @@ function ClaimsTab({
                           : 'border-amber-200 bg-amber-50 text-amber-800'
                     }`}
                   >
-<<<<<<< HEAD
                     <p className="font-semibold">
                       Status: {claimEligibilityResult.status}
                       {lastCheckedEligibilityType ? (
@@ -1697,9 +2153,39 @@ function ClaimsTab({
                         </span>
                       ) : null}
                     </p>
-=======
-                    <p className="font-semibold">Status: {claimEligibilityResult.status}</p>
->>>>>>> origin/staging
+                    {claimEligibilityResult.hnet ? (
+                      <p className="mt-1 text-xs">
+                        <span className="font-semibold">HNET:</span> {claimEligibilityResult.hnet}
+                        <span className="text-slate-600">
+                          {' '}
+                          (will be sent on claim submit)
+                        </span>
+                      </p>
+                    ) : null}
+                    {claimEligibilityResult.planCode ? (
+                      <p className="mt-1 text-xs">
+                        <span className="font-semibold">Plan:</span> {claimEligibilityResult.planCode}
+                      </p>
+                    ) : null}
+                    {typeof claimEligibilityResult.dependantCount === 'number' ? (
+                      <p className="mt-1 text-xs">
+                        <span className="font-semibold">Dependants:</span>{' '}
+                        {claimEligibilityResult.dependantCount}
+                      </p>
+                    ) : null}
+                    {lastCheckedEligibilityType === 'normal' &&
+                    claimEligibilityResult.verifiedPatient ? (
+                      <VerifiedPatientPanel patient={claimEligibilityResult.verifiedPatient} />
+                    ) : null}
+                    {lastCheckedEligibilityType === 'family' &&
+                    claimEligibilityResult.familyMembers?.length ? (
+                      <FamilyMembersPanel
+                        members={claimEligibilityResult.familyMembers}
+                        inquiryDependantCode={lastEligibilityInquiryDep}
+                        inquiryMatch={claimEligibilityResult.inquiryMatch}
+                        onApplyMember={applyFamilyMemberToClaim}
+                      />
+                    ) : null}
                     {claimEligibilityResult.messages?.length ? (
                       <ul className="mt-1 list-disc pl-5">
                         {claimEligibilityResult.messages.map((msg, idx) => (
@@ -1758,12 +2244,24 @@ function ClaimsTab({
               onAction={submitClaim}
               actionDisabled={!canSubmit || claimEligibilityLoading}
             />
+            {lastClaimSubmitResult ? (
+              <ClaimSubmitResultPanel result={lastClaimSubmitResult} />
+            ) : null}
+            {patient?.id && recentPatientEligibility.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Recent eligibility checks</p>
+                <div className="mt-2 space-y-2">
+                  {recentPatientEligibility.slice(0, 3).map((entry, idx) =>
+                    renderPatientEligibilityHistoryRecord(entry, idx),
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
 
         {subTab === 'reverse' && (
           <div className="mt-1 space-y-4">
-<<<<<<< HEAD
             {reversalError ? (
               <BillingErrorAlert
                 title="Reversal failed"
@@ -1777,15 +2275,10 @@ function ClaimsTab({
             </p>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
-=======
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <div className="md:col-span-2">
->>>>>>> origin/staging
                 <Label>Select claim to reverse</Label>
                 <select
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-100"
                   value={reversalTx}
-<<<<<<< HEAD
                   onChange={e => {
                     const tx = e.target.value;
                     setReversalTx(tx);
@@ -1830,32 +2323,6 @@ function ClaimsTab({
             ) : (
               <p className="text-sm text-slate-500">No claim selected yet.</p>
             )}
-=======
-                  onChange={e => setReversalTx(e.target.value)}
-                >
-                  <option value="">Select a claim…</option>
-                  {visibleClaims.map(c =>
-                    c.transactionNumber ? (
-                      <option key={c.id} value={c.transactionNumber}>
-                        {c.transactionNumber} — {c.patientLastName || ''} ({c.memberNumber})
-                      </option>
-                    ) : null
-                  )}
-                </select>
-              </div>
-              <div>
-                <Label>Transaction number</Label>
-                <Input value={reversalTx} onChange={e => setReversalTx(e.target.value)} placeholder="e.g. TX123456789" />
-              </div>
-            </div>
-            <ClaimForm
-              payload={reversalPayload}
-              onChange={setReversalPayload}
-              actionLabel="Reverse claim"
-              onAction={reverseClaim}
-              actionVariant="danger"
-            />
->>>>>>> origin/staging
           </div>
         )}
       </Section>
@@ -1925,13 +2392,11 @@ function ClaimForm({
         ...payload.lineItems,
         {
           procedureCode: '',
+          nappiCode: '',
           description: '',
           quantity: 1,
-<<<<<<< HEAD
           baseTariffCents: 0,
           tariffPercent: 100,
-=======
->>>>>>> origin/staging
           unitPriceCents: 0,
           totalPriceCents: 0,
           serviceDate: getTodayIsoDate(),
@@ -1947,13 +2412,11 @@ function ClaimForm({
         : [
             {
               procedureCode: '',
+              nappiCode: '',
               description: '',
               quantity: 1,
-<<<<<<< HEAD
               baseTariffCents: 0,
               tariffPercent: 100,
-=======
->>>>>>> origin/staging
               unitPriceCents: 0,
               totalPriceCents: 0,
               serviceDate: getTodayIsoDate(),
@@ -1962,7 +2425,6 @@ function ClaimForm({
     });
   };
 
-<<<<<<< HEAD
   const totalClaimedCents = payload.lineItems.reduce(
     (sum, li) => sum + (Number(li.totalPriceCents) || 0),
     0,
@@ -1971,10 +2433,20 @@ function ClaimForm({
   const averageLineCents =
     totalLineItems > 0 ? Math.round(totalClaimedCents / totalLineItems) : 0;
 
-=======
->>>>>>> origin/staging
   return (
     <div className="space-y-4">
+      <div className="rounded-xl border border-cyan-100 bg-cyan-50/50 p-3">
+        <Label>HNET (from eligibility)</Label>
+        <Input
+          value={payload.hnet || ''}
+          onChange={(e) => onChange({ ...payload, hnet: e.target.value })}
+          placeholder="Filled after eligibility check"
+        />
+        <p className="mt-1 text-xs text-slate-500">
+          Sent to MediKredit as authorization on the claim. Run eligibility first, or paste HNET manually.
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div>
           <Label>Patient first name</Label>
@@ -2097,7 +2569,6 @@ function ClaimForm({
                         (opt) => opt.procedureCode === procedureCode && (opt.description || '') === (description || '')
                       );
                       if (!option) return;
-<<<<<<< HEAD
                       updateLineItem(idx, recalcLineItemFromTariff({
                         procedureCode: option.procedureCode,
                         description: option.description,
@@ -2106,17 +2577,10 @@ function ClaimForm({
                         tariffPercent: 100,
                         unitPriceCents: option.unitPriceCents,
                         totalPriceCents: option.totalPriceCents,
+                        nappiCode: option.nappiCode,
+                        medicineQuantity: option.medicineQuantity ?? option.quantity,
                         serviceDate: li.serviceDate,
                       }));
-=======
-                      updateLineItem(idx, {
-                        procedureCode: option.procedureCode,
-                        description: option.description,
-                        quantity: option.quantity,
-                        unitPriceCents: option.unitPriceCents,
-                        totalPriceCents: option.totalPriceCents,
-                      });
->>>>>>> origin/staging
                     }}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
                   >
@@ -2129,8 +2593,30 @@ function ClaimForm({
                   </select>
                 </div>
                 <div>
-                  <Label>Procedure code</Label>
-                  <Input value={li.procedureCode} onChange={e => updateLineItem(idx, { procedureCode: e.target.value })} />
+                  <Label>Procedure code (tar_cd)</Label>
+                  <Input value={li.procedureCode} onChange={e => updateLineItem(idx, { procedureCode: e.target.value })} placeholder="e.g. 0201 for NAPPI" />
+                </div>
+                <div>
+                  <Label>NAPPI code (optional)</Label>
+                  <Input
+                    value={li.nappiCode || ''}
+                    onChange={e => updateLineItem(idx, { nappiCode: e.target.value })}
+                    placeholder="e.g. 472409018"
+                  />
+                </div>
+                <div>
+                  <Label>Medicine qty (optional)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={li.medicineQuantity ?? li.quantity}
+                    onChange={e =>
+                      updateLineItem(idx, {
+                        medicineQuantity: Number(e.target.value || li.quantity),
+                      })
+                    }
+                  />
                 </div>
                 <div>
                   <Label>Service date</Label>
@@ -2142,7 +2628,6 @@ function ClaimForm({
                     type="number"
                     min={0}
                     value={li.quantity}
-<<<<<<< HEAD
                     onChange={e =>
                       updateLineItem(
                         idx,
@@ -2196,9 +2681,6 @@ function ClaimForm({
                     min={0}
                     value={li.unitPriceCents}
                     onChange={e => updateLineItem(idx, { unitPriceCents: Number(e.target.value || 0) })}
-=======
-                    onChange={e => updateLineItem(idx, { quantity: Number(e.target.value || 0) })}
->>>>>>> origin/staging
                   />
                 </div>
                 <div>
@@ -2222,7 +2704,6 @@ function ClaimForm({
         </div>
       </div>
 
-<<<<<<< HEAD
       <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-3">
         <p className="text-xs font-bold uppercase tracking-wider text-cyan-700">Financial Preview</p>
         <p className="mt-1 text-xs text-cyan-800">
@@ -2235,8 +2716,6 @@ function ClaimForm({
         </div>
       </div>
 
-=======
->>>>>>> origin/staging
       <div className="flex justify-end">
         <SmallButton onClick={onAction} disabled={actionDisabled} variant={actionVariant}>
           {actionLabel}

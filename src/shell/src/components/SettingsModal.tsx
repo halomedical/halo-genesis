@@ -60,10 +60,7 @@ const MODULE_LABELS: Array<{
 
 export const SettingsModal: React.FC<Props> = ({
   isOpen, onClose, settings, onSave, onImportPatientsJson, userEmail, loginTime, onToast,
-<<<<<<< HEAD
-=======
   effectiveFeatures, practiceName,
->>>>>>> origin/staging
 }) => {
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState<UserSettings>(normalizeUserSettings(settings || DEFAULT_SETTINGS));
@@ -661,11 +658,7 @@ export const SettingsModal: React.FC<Props> = ({
           </div>
 
           <div className="border-t border-slate-100 pt-6">
-<<<<<<< HEAD
-            <h3 className="mb-3 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
-=======
             <h3 className="mb-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
->>>>>>> origin/staging
               <LayoutPanelTop size={12} /> Modules
             </h3>
             <p className="mb-3 text-xs text-slate-500">

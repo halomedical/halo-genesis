@@ -1,14 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import type { EffectiveFeatureFlags } from '../../shared/featureFlags';
-<<<<<<< HEAD
-import { getVpsJwt } from '../services/vpsApi';
-import {
-  loadUserSettingsForEmail,
-  resolveEffectiveFeaturesForUser,
-} from '../services/userFeatures';
-=======
 import { getPracticeEntitlementsForEmail } from '../services/practiceEntitlements';
->>>>>>> origin/staging
 
 export function requireFeature(feature: keyof EffectiveFeatureFlags) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -20,13 +12,7 @@ export function requireFeature(feature: keyof EffectiveFeatureFlags) {
         return;
       }
 
-<<<<<<< HEAD
-      const vpsJwt = await getVpsJwt(token, userEmail);
-      const settings = await loadUserSettingsForEmail(vpsJwt, userEmail);
-      const effective = resolveEffectiveFeaturesForUser(userEmail, settings);
-=======
       const { effective } = await getPracticeEntitlementsForEmail(userEmail);
->>>>>>> origin/staging
 
       if (!effective[feature]) {
         res.status(403).json({ error: `Feature disabled: ${feature}` });

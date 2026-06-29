@@ -30,26 +30,18 @@ import {
 } from '../services/admissionsBoard';
 // Scheduler disabled; run-scheduler and scheduler-status kept for optional manual use
 import { runSchedulerNow, getSchedulerStatus } from '../jobs/scheduler';
-<<<<<<< HEAD
-import { normalizeUserSettings } from '../../shared/types';
-import type { AdmissionsBoard, ScribeSession, UserModulesSettings } from '../../shared/types';
-import { getVpsJwt } from '../services/vpsApi';
-=======
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../shared/types';
 import {
   getPracticeEntitlementsForEmail,
   getOnboardingStateForEmail,
   submitOnboardingForEmail,
 } from '../services/practiceEntitlements';
-import type { AdmissionsBoard, ScribeSession } from '../../shared/types';
+import type { AdmissionsBoard, ScribeSession, UserModulesSettings } from '../../shared/types';
 import { getVpsJwt, getVpsConfig, setVpsConfig } from '../services/vpsApi';
->>>>>>> origin/staging
 import { requireFeature } from '../middleware/requireFeature';
 import {
   isFeatureAdmin,
-  loadUserSettingsForEmail,
   resolveEffectiveFeaturesForUser,
-  saveUserSettingsForEmail,
   setUserModulesForEmail,
 } from '../services/userFeatures';
 
@@ -72,7 +64,7 @@ const ALLOWED_UPLOAD_TYPES = [
 ];
 const DEFAULT_PAGE_SIZE = 50;
 
-// Internal app file — never show in patient folder listing
+// Internal app file â€” never show in patient folder listing
 const SESSIONS_FILE_NAME = 'halo_scribe_sessions.json';
 const ADMISSIONS_BOARD_FILE_NAME = 'halo_admissions_board.json';
 const BILLING_CLAIMS_FILE_NAME = 'halo_billing_claims.json';
@@ -82,6 +74,25 @@ const BILLING_ELIGIBILITY_FILE_NAME = 'halo_billing_eligibility.json';
 const FILES_CACHE_TTL_MS = 30_000; // 30 seconds
 const filesListCache = new Map<string, { files: Array<{ id: string; name: string; mimeType: string; url: string; thumbnail?: string; createdTime: string }>; nextPage: string | null; cachedAt: number }>();
 
+const USER_SETTINGS_KEY = 'user_settings';
+const USER_SETTINGS_V2_MARKER = '__by_email__';
+
+function normalizeSettingsEmail(userEmail: string): string {
+  return String(userEmail || '').trim().toLowerCase();
+}
+
+function parseSettingsBlob(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function invalidateFilesCacheForFolder(folderId: string): void {
   for (const key of filesListCache.keys()) {
@@ -305,7 +316,7 @@ router.get('/patients', async (req: Request, res: Response) => {
   }
 });
 
-// POST /run-scheduler — run conversion jobs immediately (no wait for 5-min interval)
+// POST /run-scheduler â€” run conversion jobs immediately (no wait for 5-min interval)
 router.post('/run-scheduler', async (_req: Request, res: Response) => {
   try {
     await runSchedulerNow();
@@ -316,7 +327,7 @@ router.post('/run-scheduler', async (_req: Request, res: Response) => {
   }
 });
 
-// GET /scheduler-status — check pending conversion jobs count
+// GET /scheduler-status â€” check pending conversion jobs count
 router.get('/scheduler-status', async (_req: Request, res: Response) => {
   try {
     const status = getSchedulerStatus();
@@ -573,7 +584,7 @@ router.post('/patients', async (req: Request, res: Response) => {
       }),
     });
 
-    // Create standard subfolders and _Summary.md in background — non-blocking
+    // Create standard subfolders and _Summary.md in background â€” non-blocking
     const subfolderNames = ['Clerking Sheets', 'Letters', 'Radiology', 'Labs', 'Scanned Documents', 'Subspecialist Referral'];
     const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
     Promise.all(subfolderNames.map(sfName =>
@@ -586,7 +597,7 @@ router.post('/patients', async (req: Request, res: Response) => {
       // Create _Summary.md
       const boundary = 'halo_summary_b';
       const meta = JSON.stringify({ name: '_Summary.md', parents: [folder.id], mimeType: 'text/markdown' });
-      const content = `# ${name} — Patient Summary\n\n_No entries yet._\n`;
+      const content = `# ${name} â€” Patient Summary\n\n_No entries yet._\n`;
       const mp = Buffer.from(
         `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n` +
         `--${boundary}\r\nContent-Type: text/markdown\r\n\r\n${content}\r\n` +
@@ -1008,7 +1019,7 @@ router.get('/patients/:id/files', async (req: Request, res: Response) => {
     const data = await driveRequest(token, url);
     const elapsed = Date.now() - start;
     if (elapsed > 3000) {
-      console.warn(`[Drive] Slow files list: ${elapsed}ms for folder ${folderId.slice(0, 8)}…`);
+      console.warn(`[Drive] Slow files list: ${elapsed}ms for folder ${folderId.slice(0, 8)}â€¦`);
     }
 
     const files = (data.files || [])
@@ -1040,10 +1051,10 @@ router.get('/patients/:id/files', async (req: Request, res: Response) => {
   }
 });
 
-// Timeout for warm upload — if it hangs, we fall back to direct list
+// Timeout for warm upload â€” if it hangs, we fall back to direct list
 const WARM_UPLOAD_TIMEOUT_MS = 12_000;
 
-// POST /patients/:id/warm-and-list — upload tiny temp file, list folder, delete temp (makes list load reliably)
+// POST /patients/:id/warm-and-list â€” upload tiny temp file, list folder, delete temp (makes list load reliably)
 // If warm upload times out, falls back to direct list so we never hang.
 router.post('/patients/:id/warm-and-list', async (req: Request, res: Response) => {
   try {
@@ -1089,7 +1100,7 @@ router.post('/patients/:id/warm-and-list', async (req: Request, res: Response) =
         tempFileId = created.id;
       }
     } catch (warmErr) {
-      // Warm upload failed or timed out — fall through to direct list (driveRequest has its own timeout)
+      // Warm upload failed or timed out â€” fall through to direct list (driveRequest has its own timeout)
       console.warn('[warm-and-list] Warm upload skipped:', warmErr instanceof Error ? warmErr.message : warmErr);
     }
 
@@ -1282,7 +1293,7 @@ router.get('/files/:fileId/download', async (req: Request, res: Response) => {
   }
 });
 
-// GET /files/:fileId/proxy — stream file content for in-app viewer
+// GET /files/:fileId/proxy â€” stream file content for in-app viewer
 router.get('/files/:fileId/proxy', async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
@@ -1516,7 +1527,7 @@ router.get('/patients/:id/summary', async (req: Request, res: Response) => {
 });
 
 // GET /admissions-board
-router.get('/admissions-board', requireFeature('admissions'), async (req: Request, res: Response) => {
+router.get('/admissions-board', async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
@@ -1530,7 +1541,7 @@ router.get('/admissions-board', requireFeature('admissions'), async (req: Reques
 });
 
 // PUT /admissions-board
-router.put('/admissions-board', requireFeature('admissions'), async (req: Request, res: Response) => {
+router.put('/admissions-board', async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
@@ -1558,7 +1569,7 @@ router.put('/admissions-board', requireFeature('admissions'), async (req: Reques
   }
 });
 
-// --- SCRIBE SESSIONS (stored per patient folder in Drive — medical data) ---
+// --- SCRIBE SESSIONS (stored per patient folder in Drive â€” medical data) ---
 
 async function findSessionsFile(token: string, patientFolderId: string): Promise<string | null> {
   const query = encodeURIComponent(
@@ -1736,10 +1747,6 @@ router.get('/settings', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
-<<<<<<< HEAD
-    const settings = await loadUserSettingsForEmail(vpsJwt, userEmail);
-    res.json({ settings });
-=======
     const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
     const parsed = parseSettingsBlob(raw);
     const emailKey = normalizeSettingsEmail(userEmail);
@@ -1762,24 +1769,16 @@ router.get('/settings', async (req: Request, res: Response) => {
     }
     const { modules: _modules, ...profileOnly } = settings;
     res.json({ settings: profileOnly });
->>>>>>> origin/staging
   } catch (err) {
     console.error('Load settings error:', err);
-    const message = err instanceof Error ? err.message : 'Failed to load settings.';
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: 'Failed to load settings.' });
   }
 });
 
-// GET /features — module access from Supabase practice_features (not user Settings)
+// GET /features â€” module access from Supabase practice_features (not user Settings)
 router.get('/features', async (req: Request, res: Response) => {
   try {
     const userEmail = req.session.userEmail!;
-<<<<<<< HEAD
-    const vpsJwt = await getVpsJwt(token, userEmail);
-    const settings = await loadUserSettingsForEmail(vpsJwt, userEmail);
-    const effective = resolveEffectiveFeaturesForUser(userEmail, settings);
-    res.json({ effective });
-=======
     const entitlements = await getPracticeEntitlementsForEmail(userEmail);
     res.json({
       effective: entitlements.effective,
@@ -1790,11 +1789,9 @@ router.get('/features', async (req: Request, res: Response) => {
       autoModules: entitlements.autoModules,
       source: entitlements.source,
     });
->>>>>>> origin/staging
   } catch (err) {
     console.error('Load feature flags error:', err);
-    const message = err instanceof Error ? err.message : 'Failed to load feature flags.';
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: 'Failed to load feature flags.' });
   }
 });
 
@@ -1819,7 +1816,7 @@ router.put('/features/grants', async (req: Request, res: Response) => {
     const savedModules = await setUserModulesForEmail(vpsJwt, targetEmail, modules);
     const effective = resolveEffectiveFeaturesForUser(
       targetEmail,
-      normalizeUserSettings({ modules: savedModules })
+      normalizeUserSettings({ modules: savedModules }),
     );
     res.json({ success: true, email: targetEmail, modules: savedModules, effective });
   } catch (err) {
@@ -1891,9 +1888,6 @@ router.put('/settings', async (req: Request, res: Response) => {
     const token = req.session.accessToken!;
     const userEmail = req.session.userEmail!;
     const vpsJwt = await getVpsJwt(token, userEmail);
-<<<<<<< HEAD
-    await saveUserSettingsForEmail(vpsJwt, userEmail, settings);
-=======
     const raw = await getVpsConfig(vpsJwt, USER_SETTINGS_KEY);
     const parsed = parseSettingsBlob(raw);
     const emailKey = normalizeSettingsEmail(userEmail);
@@ -1915,12 +1909,10 @@ router.put('/settings', async (req: Request, res: Response) => {
     const { modules: _ignoredModules, ...profileSettings } = settings;
     byEmail[emailKey] = profileSettings;
     await setVpsConfig(vpsJwt, USER_SETTINGS_KEY, JSON.stringify(nextBlob));
->>>>>>> origin/staging
     res.json({ success: true });
   } catch (err) {
     console.error('Save settings error:', err);
-    const message = err instanceof Error ? err.message : 'Failed to save settings.';
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: 'Failed to save settings.' });
   }
 });
 

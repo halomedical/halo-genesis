@@ -191,10 +191,6 @@ export async function getVpsJwt(driveToken: string, userEmail: string): Promise<
     const registered = await registerDoctor(inviteToken, userEmail, password, userEmail.split('@')[0]);
     doctorJwt = registered.access_token;
   } catch {
-<<<<<<< HEAD
-    // User may already exist — try the password we just generated, then admin fallback.
-=======
->>>>>>> origin/staging
     try {
       const loggedIn = await loginDoctor(userEmail, password);
       doctorJwt = loggedIn.access_token;

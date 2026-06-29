@@ -811,30 +811,8 @@ function patchDeepgram(state) {
     return;
   }
 
-  // Instance class style patch
-  if (DeepgramClient?.prototype) {
-    const restoreFns = [];
-    wrapProviderMethod(state, restoreFns, DeepgramClient.prototype, "listen.live", {
-      provider: "deepgram",
-      operation: "listen.live"
-    });
-    wrapProviderMethod(state, restoreFns, DeepgramClient.prototype, "listen.prerecorded.transcribeFile", {
-      provider: "deepgram",
-      operation: "listen.prerecorded.transcribeFile"
-    });
-    wrapProviderMethod(state, restoreFns, DeepgramClient.prototype, "listen.prerecorded.transcribeUrl", {
-      provider: "deepgram",
-      operation: "listen.prerecorded.transcribeUrl"
-    });
-
-    if (restoreFns.length > 0) {
-      state.stopFns.push(() => {
-        for (const fn of restoreFns) {
-          fn();
-        }
-      });
-    }
-  }
+  // Deepgram v4 exposes `listen` as an instance getter. Patching the class prototype
+  // invokes that getter without client options and crashes AbstractClient.
 
   // Factory function style patch
   if (typeof deepgramMod?.createClient === "function") {
@@ -1974,7 +1952,18 @@ function wrapProviderMethod(state, restoreFns, rootObj, dottedPath, options) {
   let parent = rootObj;
 
   for (let i = 0; i < steps.length - 1; i += 1) {
-    parent = parent?.[steps[i]];
+    const step = steps[i];
+    let next = parent?.[step];
+    if (next === undefined && parent) {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(parent),
+        step
+      );
+      if (descriptor?.get) {
+        return;
+      }
+    }
+    parent = next;
     if (!parent) {
       return;
     }
