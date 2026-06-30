@@ -120,6 +120,10 @@ export const PdfStudioCanvas: React.FC<PdfStudioCanvasProps> = ({
   const dragPreviewRef = useRef<Map<string, { x: number; y: number }> | null>(null);
   const dragRafRef = useRef<number | null>(null);
   const [dragFrame, setDragFrame] = useState(0);
+  const marqueeAddToSelectionRef = useRef(false);
+
+  const pageOffsetPxRef = useRef(0);
+  const scaleFactorRef = useRef(1);
 
   const selectedSet = useMemo(() => new Set(selectedFieldKeys), [selectedFieldKeys]);
   const multiSelected = selectedFieldKeys.length > 1;
@@ -156,6 +160,24 @@ export const PdfStudioCanvas: React.FC<PdfStudioCanvasProps> = ({
   const stageWidthPx = renderedPageWidth + (extraLeftPt + extraRightPt) * scaleFactor;
   const pageOffsetPx = extraLeftPt * scaleFactor;
   const pageHeightPx = (renderedPageWidth / nativeWidth) * nativeHeight;
+  pageOffsetPxRef.current = pageOffsetPx;
+  scaleFactorRef.current = scaleFactor;
+
+  const rndBounds = useMemo(
+    () => ({
+      left: pageOffsetPx,
+      top: 0,
+      right: pageOffsetPx + renderedPageWidth,
+      bottom: pageHeightPx,
+    }),
+    [pageHeightPx, pageOffsetPx, renderedPageWidth]
+  );
+
+  const overlayPointFromClient = useCallback((clientX: number, clientY: number) => {
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }, []);
 
   const fieldPositions = useMemo(() => {
     void dragFrame;
@@ -288,7 +310,8 @@ export const PdfStudioCanvas: React.FC<PdfStudioCanvasProps> = ({
       setDrawRect({ startX: x, startY: y, endX: x, endY: y });
       return;
     }
-    const addToSelection = e.metaKey || e.ctrlKey;
+    const addToSelection = e.metaKey || e.ctrlKey || e.shiftKey;
+    marqueeAddToSelectionRef.current = addToSelection;
     setMarquee({ startX: x, startY: y, endX: x, endY: y });
     if (!addToSelection) onSelectionChange([], null);
   };
@@ -311,8 +334,42 @@ export const PdfStudioCanvas: React.FC<PdfStudioCanvasProps> = ({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     if (drawRect) finishDraw(x, y);
-    else if (marquee) finishMarquee(x, y, e.metaKey || e.ctrlKey);
+    else if (marquee) {
+      finishMarquee(x, y, marqueeAddToSelectionRef.current || e.shiftKey || e.metaKey || e.ctrlKey);
+    }
   };
+
+  useEffect(() => {
+    if (!marquee && !drawRect) return;
+    const onWindowMove = (e: MouseEvent) => {
+      const pt = overlayPointFromClient(e.clientX, e.clientY);
+      if (!pt) return;
+      if (drawRect) {
+        setDrawRect((d) => (d ? { ...d, endX: pt.x, endY: pt.y } : null));
+      }
+      if (marquee) {
+        setMarquee((m) => (m ? { ...m, endX: pt.x, endY: pt.y } : null));
+      }
+    };
+    const onWindowUp = (e: MouseEvent) => {
+      const pt = overlayPointFromClient(e.clientX, e.clientY);
+      if (!pt) return;
+      if (drawRect) finishDraw(pt.x, pt.y);
+      else if (marquee) {
+        finishMarquee(
+          pt.x,
+          pt.y,
+          marqueeAddToSelectionRef.current || e.shiftKey || e.metaKey || e.ctrlKey
+        );
+      }
+    };
+    window.addEventListener('mousemove', onWindowMove);
+    window.addEventListener('mouseup', onWindowUp);
+    return () => {
+      window.removeEventListener('mousemove', onWindowMove);
+      window.removeEventListener('mouseup', onWindowUp);
+    };
+  }, [drawRect, finishDraw, finishMarquee, marquee, overlayPointFromClient]);
 
   const onDragStart = (key: string) => {
     const positions = new Map<string, { x: number; y: number }>();
@@ -330,7 +387,7 @@ export const PdfStudioCanvas: React.FC<PdfStudioCanvasProps> = ({
 
   const onDragField = (key: string, screenX: number, screenY: number) => {
     const group = dragGroupRef.current;
-    if (!group || group.startPositions.size <= 1) return;
+    if (!group) return;
     const anchorStart = group.startPositions.get(key);
     if (!anchorStart) return;
     const pdf = screenToPdf(screenX, screenY);
@@ -507,10 +564,6 @@ export const PdfStudioCanvas: React.FC<PdfStudioCanvasProps> = ({
                   onMouseDown={onOverlayMouseDown}
                   onMouseMove={onOverlayMouseMove}
                   onMouseUp={onOverlayMouseUp}
-                  onMouseLeave={() => {
-                    if (drawRect) setDrawRect(null);
-                    if (marquee) setMarquee(null);
-                  }}
                 >
                   {pageFields.map((field) => {
                     const pos = fieldPositions.get(field.key);
@@ -522,7 +575,7 @@ export const PdfStudioCanvas: React.FC<PdfStudioCanvasProps> = ({
                       <Rnd
                         key={field.key}
                         data-field-rnd
-                        bounds="parent"
+                        bounds={rndBounds as unknown as 'parent'}
                         size={{ width: pos.width, height: pos.height }}
                         position={{ x: pos.x, y: pos.y }}
                         enableResizing={selected && !multiSelected}

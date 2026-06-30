@@ -1,3 +1,10 @@
+import type {
+  PdfFieldDataSource,
+  PdfFieldFilledBy,
+  PdfFillReview,
+} from '../../../../../../../shared/pdfFieldInference';
+import { inferFieldSemantics } from '../../../../../../../shared/pdfFieldInference';
+
 export interface LayoutField {
   key: string;
   page: number;
@@ -198,6 +205,9 @@ export function addFieldToSchema(
     y: number;
     width: number;
     height: number;
+    dataSource?: PdfFieldDataSource;
+    filledBy?: PdfFieldFilledBy;
+    fillReview?: PdfFillReview;
   }
 ): Record<string, unknown> {
   const properties = { ...((schema.properties || {}) as Record<string, JsonSchemaProperty>) };
@@ -218,6 +228,17 @@ export function addFieldToSchema(
   if (params.fieldType === 'date') {
     prop.format = 'date';
   }
+  const inferred = inferFieldSemantics({
+    key: params.key,
+    title: params.title,
+    width: params.width,
+    height: params.height,
+    type: String(prop.type),
+    format: typeof prop.format === 'string' ? prop.format : undefined,
+  });
+  prop['x-data-source'] = params.dataSource ?? inferred.dataSource;
+  prop['x-filled-by'] = params.filledBy ?? inferred.filledBy;
+  prop['x-fill-review'] = params.fillReview ?? 'suggested';
   properties[params.key] = prop;
   return { ...schema, properties };
 }
@@ -225,7 +246,13 @@ export function addFieldToSchema(
 export function updateFieldMeta(
   schema: Record<string, unknown>,
   oldKey: string,
-  params: { key: string; title: string; fieldType: FieldEditorType }
+  params: {
+    key: string;
+    title: string;
+    fieldType: FieldEditorType;
+    dataSource: PdfFieldDataSource;
+    filledBy: PdfFieldFilledBy;
+  }
 ): Record<string, unknown> {
   const properties = { ...((schema.properties || {}) as Record<string, JsonSchemaProperty>) };
   const existing = { ...(properties[oldKey] || {}) };
@@ -250,6 +277,9 @@ export function updateFieldMeta(
   } else {
     delete prop.format;
   }
+  prop['x-data-source'] = params.dataSource;
+  prop['x-filled-by'] = params.filledBy;
+  prop['x-fill-review'] = 'confirmed';
   properties[params.key] = prop;
   return { ...schema, properties };
 }
@@ -294,18 +324,34 @@ export function applyLayoutsToSchema(
 export function fieldMetaFromProperty(
   key: string,
   prop: JsonSchemaProperty
-): { key: string; title: string; fieldType: FieldEditorType } {
+): {
+  key: string;
+  title: string;
+  fieldType: FieldEditorType;
+  dataSource: PdfFieldDataSource;
+  filledBy: PdfFieldFilledBy;
+  fillReview: PdfFillReview;
+} {
   const title = typeof prop.title === 'string' && prop.title.trim() ? prop.title : key;
+  let fieldType: FieldEditorType = 'text';
   if (prop.type === 'boolean') {
-    return { key, title, fieldType: 'checkbox' };
+    fieldType = 'checkbox';
+  } else if (prop.type === 'integer' || prop.type === 'number') {
+    fieldType = 'number';
+  } else if (prop.format === 'date') {
+    fieldType = 'date';
   }
-  if (prop.type === 'integer' || prop.type === 'number') {
-    return { key, title, fieldType: 'number' };
-  }
-  if (prop.format === 'date') {
-    return { key, title, fieldType: 'date' };
-  }
-  return { key, title, fieldType: 'text' };
+  const dataSource = prop['x-data-source'] as PdfFieldDataSource | undefined;
+  const filledBy = prop['x-filled-by'] as PdfFieldFilledBy | undefined;
+  const fillReview = prop['x-fill-review'] as PdfFillReview | undefined;
+  return {
+    key,
+    title,
+    fieldType,
+    dataSource: dataSource ?? 'none',
+    filledBy: filledBy ?? 'clinician',
+    fillReview: fillReview ?? 'suggested',
+  };
 }
 
 const CANVAS_PAD_PT = 24;
@@ -358,4 +404,196 @@ export function initialFormDataFromSchema(schema: Record<string, unknown>): Reco
     }
   }
   return out;
+}
+
+const DUPLICATE_GAP_PT = 6;
+
+export function baseTitleForDuplicate(title: string): string {
+  return title.replace(/\s+\d+$/, '').trim() || title;
+}
+
+export function nextNumberedDuplicateTitle(
+  schema: Record<string, unknown>,
+  baseTitle: string
+): string {
+  const properties = (schema.properties || {}) as Record<string, JsonSchemaProperty>;
+  const base = baseTitleForDuplicate(baseTitle);
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${escaped}(?:\\s+(\\d+))?$`, 'i');
+  let maxN = 0;
+  for (const prop of Object.values(properties)) {
+    const t = typeof prop.title === 'string' ? prop.title.trim() : '';
+    if (!t) continue;
+    const m = t.match(pattern);
+    if (m) {
+      const n = m[1] ? Number(m[1]) : 0;
+      if (Number.isFinite(n)) maxN = Math.max(maxN, n);
+    }
+  }
+  return `${base} ${maxN + 1}`;
+}
+
+export type AlignMode = 'left' | 'right' | 'top' | 'bottom' | 'centerH' | 'centerV';
+export type DistributeMode = 'horizontal' | 'vertical';
+
+export function duplicateFieldsInSchema(
+  schema: Record<string, unknown>,
+  keys: string[],
+  layoutFields: LayoutField[]
+): { schema: Record<string, unknown>; newKeys: string[] } {
+  const fieldByKey = new Map(layoutFields.map((f) => [f.key, f]));
+  const ordered = [...keys]
+    .filter((k) => fieldByKey.has(k))
+    .sort((a, b) => {
+      const fa = fieldByKey.get(a)!;
+      const fb = fieldByKey.get(b)!;
+      return fa.y - fb.y || fa.x - fb.x;
+    });
+  if (ordered.length === 0) return { schema, newKeys: [] };
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxBottom = -Infinity;
+  for (const k of ordered) {
+    const f = fieldByKey.get(k)!;
+    minX = Math.min(minX, f.x);
+    minY = Math.min(minY, f.y);
+    maxBottom = Math.max(maxBottom, f.y + f.height);
+  }
+  const groupDy = maxBottom - minY + DUPLICATE_GAP_PT;
+
+  let next = cloneSchema(schema);
+  const properties = (next.properties || {}) as Record<string, JsonSchemaProperty>;
+  const newKeys: string[] = [];
+
+  for (const key of ordered) {
+    const source = fieldByKey.get(key)!;
+    const sourceProp = { ...(properties[key] || {}) };
+    const baseTitle =
+      typeof sourceProp.title === 'string' && sourceProp.title.trim()
+        ? sourceProp.title
+        : source.label;
+    const title = nextNumberedDuplicateTitle(next, baseTitle);
+    const newKey = uniqueFieldKey(next, title);
+    const newY = source.y + groupDy;
+    const newProp: JsonSchemaProperty = {
+      ...sourceProp,
+      title,
+      x: source.x,
+      y: newY,
+    };
+    properties[newKey] = newProp;
+    next = { ...next, properties };
+    newKeys.push(newKey);
+  }
+
+  return { schema: next, newKeys };
+}
+
+function selectionBounds(fields: LayoutField[]): {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  centerX: number;
+  centerY: number;
+} {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const f of fields) {
+    minX = Math.min(minX, f.x);
+    minY = Math.min(minY, f.y);
+    maxX = Math.max(maxX, f.x + f.width);
+    maxY = Math.max(maxY, f.y + f.height);
+  }
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    centerX: (minX + maxX) / 2,
+    centerY: (minY + maxY) / 2,
+  };
+}
+
+export function alignFieldsInSchema(
+  schema: Record<string, unknown>,
+  keys: string[],
+  mode: AlignMode,
+  layoutFields: LayoutField[]
+): Record<string, unknown> {
+  const fieldByKey = new Map(layoutFields.map((f) => [f.key, f]));
+  const selected = keys.map((k) => fieldByKey.get(k)).filter((f): f is LayoutField => Boolean(f));
+  if (selected.length < 2) return schema;
+  const b = selectionBounds(selected);
+  const updates: Array<{ key: string; patch: Partial<Pick<LayoutField, 'x' | 'y'>> }> = [];
+  for (const f of selected) {
+    let x = f.x;
+    let y = f.y;
+    switch (mode) {
+      case 'left':
+        x = b.minX;
+        break;
+      case 'right':
+        x = b.maxX - f.width;
+        break;
+      case 'top':
+        y = b.minY;
+        break;
+      case 'bottom':
+        y = b.maxY - f.height;
+        break;
+      case 'centerH':
+        x = b.centerX - f.width / 2;
+        break;
+      case 'centerV':
+        y = b.centerY - f.height / 2;
+        break;
+      default:
+        break;
+    }
+    updates.push({ key: f.key, patch: { x, y } });
+  }
+  return applyLayoutsToSchema(schema, updates);
+}
+
+export function distributeFieldsInSchema(
+  schema: Record<string, unknown>,
+  keys: string[],
+  mode: DistributeMode,
+  layoutFields: LayoutField[]
+): Record<string, unknown> {
+  const fieldByKey = new Map(layoutFields.map((f) => [f.key, f]));
+  const selected = keys
+    .map((k) => fieldByKey.get(k))
+    .filter((f): f is LayoutField => Boolean(f));
+  if (selected.length < 3) return schema;
+
+  const updates: Array<{ key: string; patch: Partial<Pick<LayoutField, 'x' | 'y'>> }> = [];
+
+  if (mode === 'horizontal') {
+    const sorted = [...selected].sort((a, b) => a.x - b.x);
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const span = last.x - first.x;
+    const step = span / (sorted.length - 1);
+    sorted.forEach((f, i) => {
+      if (i === 0 || i === sorted.length - 1) return;
+      updates.push({ key: f.key, patch: { x: first.x + step * i } });
+    });
+  } else {
+    const sorted = [...selected].sort((a, b) => a.y - b.y);
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const span = last.y - first.y;
+    const step = span / (sorted.length - 1);
+    sorted.forEach((f, i) => {
+      if (i === 0 || i === sorted.length - 1) return;
+      updates.push({ key: f.key, patch: { y: first.y + step * i } });
+    });
+  }
+
+  return applyLayoutsToSchema(schema, updates);
 }

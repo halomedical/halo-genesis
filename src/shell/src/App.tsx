@@ -4,11 +4,13 @@ import { PatientWorkspace, type WorkspaceNavigationIntent } from './pages/Patien
 import { Toast } from './components/Toast';
 import { SettingsModal } from './components/SettingsModal';
 import { UploadHud } from './components/UploadHud';
-import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson, updatePatientFamily } from './services/api';
+import { checkAuth, getLoginUrl, logout, fetchAllPatients, warmAndListFiles, createPatient, deletePatient, loadSettings, saveSettings, ApiError, extractPatientSticker, fetchEffectiveFeatures, importPatientsJson, updatePatientFamily, selectAppPersona, type AppPersona } from './services/api';
 import { AdminAgentPanel } from './modules/admin-agent/components/AdminAgentPanel';
 import { AdminAgentOnboarding } from './modules/admin-agent/components/AdminAgentOnboarding';
 import { BillingPage } from './modules/billing/BillingPage';
 import { PdfFillerHubPage } from './modules/pdf-filler/PdfFillerHubPage';
+import { PersonaChooserPage } from './pages/PersonaChooserPage';
+import { capabilitiesForPersona } from '../../../shared/appPersona';
 import type { Patient, UserSettings, CalendarEvent } from '../../../shared/types';
 import type { EffectiveFeatureFlags } from '../../../shared/featureFlags';
 import type { StickerExtractedData } from './services/api';
@@ -58,6 +60,8 @@ export const App = () => {
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [effectiveFeatures, setEffectiveFeatures] = useState<EffectiveFeatureFlags | null>(null);
   const [userEmail, setUserEmail] = useState<string | undefined>();
+  const [userName, setUserName] = useState<string | undefined>();
+  const [appPersona, setAppPersona] = useState<AppPersona | null>(null);
   const [loginTime] = useState<number>(Date.now());
 
   // Toast notification state
@@ -195,6 +199,8 @@ export const App = () => {
         if (auth.signedIn) {
           setIsSignedIn(true);
           setUserEmail(auth.email);
+          setUserName(auth.name);
+          setAppPersona(auth.appPersona ?? null);
           const loadedPatients = await refreshPatients();
           // Validate stored patient selection — clear if patient no longer exists
           const storedId = sessionStorage.getItem('halo_selectedPatientId');
@@ -247,9 +253,20 @@ export const App = () => {
   const handleLogout = async () => {
     await logout();
     setIsSignedIn(false);
+    setAppPersona(null);
     selectPatient(null);
     setActiveMainView('workspace');
   };
+
+  const handlePersonaSelected = useCallback(async (persona: AppPersona) => {
+    setAppPersona(persona);
+    try {
+      await selectAppPersona(persona);
+    } catch (err) {
+      showToast(getErrorMessage(err), 'error');
+      setAppPersona(null);
+    }
+  }, [showToast]);
 
   const resetCreateForm = () => {
     setNewPatientName("");
@@ -434,9 +451,26 @@ export const App = () => {
   const activePatient = patients.find(p => p.id === selectedPatientId);
   const admissionsEnabled = effectiveFeatures?.admissions ?? (userSettings?.modules?.admissions ?? false);
   const billingEnabled = effectiveFeatures?.billing ?? (userSettings?.modules?.billing ?? false);
-  const pdfFillerEnabled = effectiveFeatures?.pdfFiller ?? (userSettings?.modules?.pdfFiller ?? false);
-  const scribeEnabled = effectiveFeatures?.scribe ?? (userSettings?.modules?.scribe ?? true);
+  const pdfFillerModuleEnabled = effectiveFeatures?.pdfFiller ?? (userSettings?.modules?.pdfFiller ?? false);
+  const resolvedPersona = appPersona ?? 'clinician';
+  const personaCaps = capabilitiesForPersona(resolvedPersona);
+  const scribeEnabled = personaCaps.scribe && (effectiveFeatures?.scribe ?? (userSettings?.modules?.scribe ?? true));
+  const pdfFillerPatientTab = personaCaps.pdfFillerPatientTab && pdfFillerModuleEnabled;
+  const pdfFillerHub = personaCaps.pdfFillerHub && pdfFillerModuleEnabled;
   const hideSidebarOnMobile = activeMainView === 'workspace' && Boolean(selectedPatientId);
+
+  if (isSignedIn && pdfFillerModuleEnabled && !appPersona) {
+    return (
+      <>
+        <PersonaChooserPage
+          userName={userName}
+          onSelected={handlePersonaSelected}
+          onError={(message) => showToast(message, 'error')}
+        />
+        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      </>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-100 font-sans text-slate-900 overflow-hidden relative">
@@ -467,8 +501,8 @@ export const App = () => {
           onOpenMarketplace={() => setActiveMainView('marketplace')}
           billingEnabled={billingEnabled}
           onOpenBilling={() => billingEnabled && setActiveMainView('billing')}
-          pdfFillerEnabled={pdfFillerEnabled}
-          onOpenPdfFiller={() => pdfFillerEnabled && setActiveMainView('pdf-filler')}
+          pdfFillerEnabled={pdfFillerHub}
+          onOpenPdfFiller={() => pdfFillerHub && setActiveMainView('pdf-filler')}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         />
@@ -514,7 +548,7 @@ export const App = () => {
             selectedPatientId={selectedPatientId}
             userSettings={userSettings}
           />
-        ) : activeMainView === 'pdf-filler' && pdfFillerEnabled ? (
+        ) : activeMainView === 'pdf-filler' && pdfFillerHub ? (
           <PdfFillerHubPage onToast={showToast} />
         ) : activePatient ? (
           <PatientWorkspace
@@ -528,7 +562,10 @@ export const App = () => {
             templateId={userSettings?.templateId || 'clinical_note'}
             onUploadHudChange={setUploadHudState}
             scribeEnabled={scribeEnabled}
-            pdfFillerEnabled={pdfFillerEnabled}
+            pdfFillerEnabled={pdfFillerPatientTab}
+            formIntelligenceDefaultDocumentType={
+              resolvedPersona === 'clinician' ? 'insurance_form' : undefined
+            }
             navigationIntent={workspaceIntent}
             onNavigationIntentHandled={(intentId) =>
               setWorkspaceIntent((current) => (current?.id === intentId ? null : current))

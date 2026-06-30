@@ -24,9 +24,10 @@ import { KeepFormPrivateControl } from '../components/KeepFormPrivateControl';
 import { IntakeSidebar } from './components/IntakeSidebar';
 import { PdfStudioCanvas } from './components/PdfStudioCanvas';
 import { PdfPageFooter } from './components/PdfPageFooter';
-import type { PendingFieldRect } from './components/FieldEditorPanel';
+import type { FieldEditorSaveParams, PendingFieldRect } from './components/FieldEditorPanel';
 import type { FieldEditorType } from './utils/schemaLayout';
 import { uniqueFieldKey } from './utils/schemaLayout';
+import { schemaHasUnconfirmedFillReview } from '../../../../../../shared/pdfFieldInference';
 
 type ToastFn = (message: string, type: 'success' | 'error' | 'info') => void;
 
@@ -65,6 +66,27 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({
     setPrimaryFieldKey(primary ?? keys[0] ?? null);
     setFieldEditorOpen(false);
   }, []);
+
+  const handleDuplicateSelected = useCallback(() => {
+    if (selectedFieldKeys.length === 0) return;
+    const newKeys = state.duplicateFields(selectedFieldKeys);
+    if (newKeys.length > 0) {
+      setSelectedFieldKeys(newKeys);
+      setPrimaryFieldKey(newKeys[0] ?? null);
+      setFieldEditorOpen(true);
+    }
+  }, [selectedFieldKeys, state]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
+        e.preventDefault();
+        handleDuplicateSelected();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleDuplicateSelected]);
 
   const handleSelectFields = useCallback(
     (keys: string[], primary?: string | null, _toggle?: boolean) => {
@@ -193,6 +215,14 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({
 
   const handleSaveTemplate = useCallback(async () => {
     if (!state.pdfHash || !state.schema || !state.uploadedFile) return;
+    const unconfirmed = schemaHasUnconfirmedFillReview(state.schema);
+    if (unconfirmed.length > 0) {
+      onToast?.(
+        `Confirm fill settings for ${unconfirmed.length} field(s) before saving (open each field and click Confirm field). First: ${unconfirmed[0]}`,
+        'error'
+      );
+      return;
+    }
     if (documentType === 'insurance_form' && !insuranceCompanyId) {
       onToast?.('Select an insurance company before saving.', 'error');
       return;
@@ -293,7 +323,7 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({
   }, []);
 
   const handlePendingFieldSave = useCallback(
-    (params: { title: string; key: string; fieldType: FieldEditorType }) => {
+    (params: FieldEditorSaveParams) => {
       if (!pendingDrawRect || !state.schema) return;
       const key = uniqueFieldKey(state.schema, params.key);
       const added = state.addField({
@@ -301,6 +331,9 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({
         title: params.title,
         key,
         fieldType: params.fieldType,
+        dataSource: params.dataSource,
+        filledBy: params.filledBy,
+        fillReview: 'confirmed',
       });
       setPendingDrawRect(null);
       if (added) {
@@ -313,7 +346,7 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({
   );
 
   const handleEditFieldSave = useCallback(
-    (params: { title: string; key: string; fieldType: FieldEditorType }) => {
+    (params: FieldEditorSaveParams) => {
       if (!primaryFieldKey) return;
       const key =
         state.schema && params.key !== primaryFieldKey
@@ -323,6 +356,8 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({
         title: params.title,
         key,
         fieldType: params.fieldType,
+        dataSource: params.dataSource,
+        filledBy: params.filledBy,
       });
       setSelectedFieldKeys([key]);
       setPrimaryFieldKey(key);
@@ -396,6 +431,9 @@ export const FormIntelligencePage: React.FC<FormIntelligencePageProps> = ({
                   setPrimaryFieldKey(null);
                   setFieldEditorOpen(false);
                 }}
+                onDuplicateSelected={handleDuplicateSelected}
+                onAlignSelected={(mode) => state.alignFields(selectedFieldKeys, mode)}
+                onDistributeSelected={(mode) => state.distributeFields(selectedFieldKeys, mode)}
                 onPendingFieldSave={handlePendingFieldSave}
                 onPendingFieldCancel={() => {
                   setPendingDrawRect(null);

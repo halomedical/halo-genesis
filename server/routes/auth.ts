@@ -182,10 +182,43 @@ router.get('/callback', async (req: Request, res: Response) => {
 
 router.get('/me', (req: Request, res: Response) => {
   if (req.session.accessToken) {
-    res.json({ signedIn: true, email: req.session.userEmail });
+    res.json({
+      signedIn: true,
+      email: req.session.userEmail,
+      name: req.session.userName,
+      appPersona: req.session.appPersona ?? null,
+    });
   } else {
     res.json({ signedIn: false });
   }
+});
+
+router.post('/persona', (req: Request, res: Response) => {
+  if (!req.session.accessToken) {
+    res.status(401).json({ error: 'Not authenticated. Please sign in.' });
+    return;
+  }
+
+  if (req.session.appPersona) {
+    res.status(403).json({ error: 'Workspace already selected. Sign out to choose a different role.' });
+    return;
+  }
+
+  const persona = req.body?.persona;
+  if (persona !== 'clinician' && persona !== 'admin_staff') {
+    res.status(400).json({ error: 'persona must be "clinician" or "admin_staff".' });
+    return;
+  }
+
+  req.session.appPersona = persona;
+  req.session.save((saveErr) => {
+    if (saveErr) {
+      console.error('Session save error (persona):', saveErr);
+      res.status(500).json({ error: 'Could not save workspace selection.' });
+      return;
+    }
+    res.json({ ok: true, appPersona: persona });
+  });
 });
 
 router.post('/logout', (req: Request, res: Response) => {

@@ -73,6 +73,13 @@ export interface UserSettings {
   lastName: string;
   profession: string;
   department: string;
+  mpNumber: string;
+  signature: string;
+  signatureImageFileId?: string;
+  signatureImageMimeType?: 'image/png';
+  signatureImageUpdatedAt?: string;
+  signatureImageSource?: 'upload' | 'drawn';
+  signatureMode?: 'none' | 'typed' | 'image';
   // Profile (optional)
   city: string;
   postalCode: string;
@@ -122,6 +129,10 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   lastName: '',
   profession: '',
   department: '',
+  mpNumber: '',
+  signature: '',
+  signatureImageFileId: '',
+  signatureImageUpdatedAt: '',
   city: '',
   postalCode: '',
   university: '',
@@ -146,6 +157,19 @@ export function normalizeUserSettings(value: Partial<UserSettings> | null | unde
         ...(value?.billing?.provider || {}),
       },
     },
+    mpNumber: typeof value?.mpNumber === 'string' ? value.mpNumber : DEFAULT_USER_SETTINGS.mpNumber,
+    signature: typeof value?.signature === 'string' ? value.signature : DEFAULT_USER_SETTINGS.signature,
+    signatureImageFileId: typeof value?.signatureImageFileId === 'string' ? value.signatureImageFileId : '',
+    signatureImageMimeType: value?.signatureImageMimeType === 'image/png' ? 'image/png' : undefined,
+    signatureImageUpdatedAt: typeof value?.signatureImageUpdatedAt === 'string' ? value.signatureImageUpdatedAt : '',
+    signatureImageSource:
+      value?.signatureImageSource === 'upload' || value?.signatureImageSource === 'drawn'
+        ? value.signatureImageSource
+        : undefined,
+    signatureMode:
+      value?.signatureMode === 'none' || value?.signatureMode === 'typed' || value?.signatureMode === 'image'
+        ? value.signatureMode
+        : undefined,
   };
 }
 
@@ -260,8 +284,151 @@ export interface PatientSummaryProcessedSource {
   sourceType: 'file' | 'consultation' | 'form';
   sourceName: string;
   sourceUpdatedAt: string;
+  extractorVersion?: string;
   processedAt: string;
 }
+
+export interface PatientSummaryProfile {
+  fullName: string;
+  firstName?: string;
+  surname?: string;
+  initials?: string;
+  title?: string;
+  dob?: string;
+  sex?: string;
+  idNumber?: string;
+  passportNumber?: string;
+  folderNumber?: string;
+  medicalAid?: string;
+  medicalAidPlan?: string;
+  medicalAidNumber?: string;
+  dependantDetails?: string;
+  contact?: string;
+  workContact?: string;
+  homeContact?: string;
+  email?: string;
+  address?: string;
+  postalAddress?: string;
+  notes?: string;
+  comorbidities?: string;
+  updatedAt?: string;
+}
+
+export interface PatientSummaryDiagnosis {
+  description: string;
+  icd10Code?: string;
+  status?: string;
+  diagnosisDate?: string;
+  symptomOnsetDate?: string;
+  firstConsultationDate?: string;
+  lastExaminationDate?: string;
+  staging?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceDate?: string;
+}
+
+export interface PatientSummaryMedication {
+  name: string;
+  strength?: string;
+  dosage?: string;
+  frequency?: string;
+  duration?: string;
+  status?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceDate?: string;
+}
+
+export interface PatientSummaryProcedure {
+  name: string;
+  date?: string;
+  quantity?: string;
+  billingCode?: string;
+  notes?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceDate?: string;
+}
+
+export interface PatientSummaryTreatmentResponse {
+  date?: string;
+  response?: string;
+  adherence?: string;
+  futureOptions?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceDate?: string;
+}
+
+export interface PatientSummaryInvestigation {
+  type: string;
+  name?: string;
+  date?: string;
+  result?: string;
+  metrics?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceDate?: string;
+}
+
+export interface PatientSummaryCareProfessional {
+  role: string;
+  name?: string;
+  specialty?: string;
+  bhfPracticeNumber?: string;
+  contact?: string;
+  signatureDate?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceDate?: string;
+}
+
+export interface PatientSummaryHospitalization {
+  institution?: string;
+  admissionDate?: string;
+  dischargeDate?: string;
+  reason?: string;
+  icuStart?: string;
+  icuEnd?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceDate?: string;
+}
+
+export interface PatientSummaryFunctionalAssessment {
+  date?: string;
+  prognosis?: string;
+  maximumMedicalImprovement?: string;
+  activitiesOfDailyLiving?: string;
+  physicalRestrictions?: string;
+  returnToWorkPlan?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceDate?: string;
+}
+
+export interface PatientSummaryStructuredFacts {
+  diagnoses: PatientSummaryDiagnosis[];
+  medications: PatientSummaryMedication[];
+  procedures: PatientSummaryProcedure[];
+  treatmentResponses: PatientSummaryTreatmentResponse[];
+  investigations: PatientSummaryInvestigation[];
+  careProfessionals: PatientSummaryCareProfessional[];
+  hospitalizations: PatientSummaryHospitalization[];
+  functionalAssessments: PatientSummaryFunctionalAssessment[];
+}
+
+export const EMPTY_PATIENT_SUMMARY_STRUCTURED_FACTS: PatientSummaryStructuredFacts = {
+  diagnoses: [],
+  medications: [],
+  procedures: [],
+  treatmentResponses: [],
+  investigations: [],
+  careProfessionals: [],
+  hospitalizations: [],
+  functionalAssessments: [],
+};
 
 export interface PatientSummaryState {
   version: number;
@@ -269,6 +436,8 @@ export interface PatientSummaryState {
   patientName: string;
   lastUpdatedAt: string | null;
   dirty: boolean;
+  profile: PatientSummaryProfile;
+  structuredFacts: PatientSummaryStructuredFacts;
   snapshot: string[];
   timeline: PatientSummaryTimelineEntry[];
   processedSources: Record<string, PatientSummaryProcessedSource>;

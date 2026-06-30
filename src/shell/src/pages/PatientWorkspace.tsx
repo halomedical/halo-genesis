@@ -212,6 +212,7 @@ interface Props {
   templateId?: string;
   scribeEnabled?: boolean;
   pdfFillerEnabled?: boolean;
+  formIntelligenceDefaultDocumentType?: import('../../../../shared/pdfFiller').PdfDocumentType;
   onUploadHudChange?: (state: UploadHudState | null) => void;
   calendarPrepEvent?: CalendarEvent | null;
   navigationIntent?: WorkspaceNavigationIntent | null;
@@ -228,6 +229,7 @@ export const PatientWorkspace: React.FC<Props> = ({
   templateId: propTemplateId,
   scribeEnabled = true,
   pdfFillerEnabled = false,
+  formIntelligenceDefaultDocumentType,
   onUploadHudChange,
   calendarPrepEvent,
   navigationIntent,
@@ -251,6 +253,7 @@ export const PatientWorkspace: React.FC<Props> = ({
   const [activeTab, setActiveTab] = useState<
     'overview' | 'notes' | 'chat' | 'sessions' | 'form-intelligence'
   >('overview');
+  const [formIntelligenceBusy, setFormIntelligenceBusy] = useState(false);
   const [savingNoteIndex, setSavingNoteIndex] = useState<number | null>(null);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [showCustomAiNoteModal, setShowCustomAiNoteModal] = useState(false);
@@ -1574,6 +1577,9 @@ export const PatientWorkspace: React.FC<Props> = ({
               }`}
             >
               {tab.label}
+              {tab.id === 'form-intelligence' && formIntelligenceBusy && (
+                <Loader2 className="ml-1.5 inline h-3.5 w-3.5 animate-spin text-cyan-600" aria-hidden />
+              )}
             </button>
           ))}
         </div>
@@ -2150,7 +2156,18 @@ export const PatientWorkspace: React.FC<Props> = ({
               )}
             </>
           ) : activeTab === 'form-intelligence' ? (
-            <PatientFormIntelligenceTab patient={patient} onToast={onToast} />
+            pdfFillerEnabled ? (
+              <PatientFormIntelligenceTab
+                patient={patient}
+                onToast={onToast}
+                onBusyChange={setFormIntelligenceBusy}
+                onSaved={async () => {
+                  await loadFolderContents(currentFolderId);
+                  onDataChange();
+                }}
+                defaultDocumentType={formIntelligenceDefaultDocumentType}
+              />
+            ) : null
           ) : (
             <PatientChat
               chatMessages={chatMessages}

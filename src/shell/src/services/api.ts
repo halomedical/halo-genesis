@@ -1,6 +1,10 @@
 import { normalizeUserSettings } from '../../../../shared/types';
 import type { EffectiveFeatureFlags } from '../../../../shared/featureFlags';
 import type { PdfDocumentType, PdfTemplateManifestEntry } from '../../../../shared/pdfFiller';
+import type { ValidatedMappingField } from '../../../../shared/mappingFeedback';
+import type { SignatureOptions } from '../../../../shared/documentSignatures';
+import type { AppPersona } from '../../../../shared/appPersona';
+import { delay } from '../utils/jobPolling';
 import type {
   AdmissionsBoard,
   Patient,
@@ -151,7 +155,21 @@ async function requestBlob(path: string, options: RequestInit = {}): Promise<Blo
 
 // --- AUTH ---
 export const getLoginUrl = () => request<{ url: string }>('/api/auth/login-url');
-export const checkAuth = () => request<{ signedIn: boolean; email?: string }>('/api/auth/me');
+export type { AppPersona };
+
+export const checkAuth = () =>
+  request<{
+    signedIn: boolean;
+    email?: string;
+    name?: string;
+    appPersona?: AppPersona | null;
+  }>('/api/auth/me');
+
+export const selectAppPersona = (persona: AppPersona) =>
+  request<{ ok: boolean; appPersona: AppPersona }>('/api/auth/persona', {
+    method: 'POST',
+    body: JSON.stringify({ persona }),
+  });
 export const logout = () => request('/api/auth/logout', { method: 'POST' });
 export const fetchEffectiveFeatures = () =>
   request<{ effective: EffectiveFeatureFlags }>('/api/drive/features');
@@ -1017,7 +1035,7 @@ export const streamAgentChat = async (
   }
 };
 
-// --- PDF Filler (Layer C) ---
+// --- PDF Filler (Form Intelligence) ---
 
 export const fetchPdfTemplates = () =>
   request<{ templates: PdfTemplateManifestEntry[] }>('/api/pdf-filler/templates');
@@ -1085,8 +1103,15 @@ export const deletePdfTemplate = (templateId: string) =>
     method: 'DELETE',
   });
 
+export type PdfAutofillPendingReason = 'summary_building' | 'autofill_slow';
+
 export const autofillPatientPdfForm = (patientId: string, params: { templateId: string }) =>
-  request<{ values: Record<string, string | null> }>(
+  request<{
+    values: Record<string, string | null>;
+    summaryPending?: boolean;
+    pendingReason?: PdfAutofillPendingReason;
+    message?: string;
+  }>(
     `/api/pdf-filler/patients/${encodeURIComponent(patientId)}/autofill`,
     {
       method: 'POST',
@@ -1094,10 +1119,21 @@ export const autofillPatientPdfForm = (patientId: string, params: { templateId: 
     }
   );
 
+export interface PdfClinicianProfile {
+  displayName: string;
+  email: string;
+  mpNumber: string;
+  signatureText: string;
+}
+
+export const fetchPdfClinicianProfile = () =>
+  request<{ profile: PdfClinicianProfile }>('/api/pdf-filler/clinician-profile');
+
 export const fillPatientPdfForm = (patientId: string, params: {
   templateId: string;
   answers: Record<string, unknown>;
   newlyAddedData?: Record<string, unknown>;
+  signatureOptions?: SignatureOptions;
 }) =>
   request<{
     fileId: string;
@@ -1113,7 +1149,82 @@ export const fillPatientPdfForm = (patientId: string, params: {
     }
   );
 
+export type PdfFillerJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+
+export interface PdfFillerFillJobResult {
+  fileId: string;
+  name: string;
+  subfolder: string;
+  templateId: string;
+  summaryFieldsUpdated?: number;
+  summaryPending?: boolean;
+  summaryWarning?: string;
+}
+
+export interface PdfFillerFillJob {
+  id: string;
+  type: string;
+  status: PdfFillerJobStatus;
+  phase: string;
+  progress: number;
+  message: string;
+  result: PdfFillerFillJobResult | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export const startPatientPdfFillJob = (patientId: string, params: {
+  templateId: string;
+  answers: Record<string, unknown>;
+  newlyAddedData?: Record<string, unknown>;
+  signatureOptions?: SignatureOptions;
+}) =>
+  request<{ jobId: string; job: PdfFillerFillJob }>(
+    `/api/pdf-filler/patients/${encodeURIComponent(patientId)}/fill/jobs`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }
+  );
+
+export const fetchPdfFillerJob = (jobId: string) =>
+  request<{ job: PdfFillerFillJob }>(`/api/pdf-filler/jobs/${encodeURIComponent(jobId)}`);
+
 export type PdfExtractionFlow = 'extract_api' | 'template_upload';
+
+type PdfExtractionResult = {
+  pdfHash: string;
+  pdfSha256: string;
+  schema: Record<string, unknown>;
+  cacheHit: boolean;
+  extractionMethod: string;
+  schemaVersion: number;
+};
+
+type PdfExtractionJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+
+type PdfExtractionJob = {
+  id: string;
+  type: string;
+  status: PdfExtractionJobStatus;
+  phase: string;
+  progress: number;
+  message: string;
+  result: PdfExtractionResult | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+};
+
+type PdfExtractionStartResponse =
+  | { completed: true; result: PdfExtractionResult }
+  | { completed: false; jobId: string; job: PdfExtractionJob };
+
+const PDF_EXTRACTION_JOB_POLL_MS = 1500;
+const PDF_EXTRACTION_JOB_MAX_WAIT_MS = 5 * 60 * 1000;
 
 export const fetchPdfExtractionEstimate = (params: {
   fileSizeBytes: number;
@@ -1128,25 +1239,49 @@ export const fetchPdfExtractionEstimate = (params: {
   );
 };
 
-export const extractPdfTemplateSchema = (params: { fileName: string; fileData: string }) =>
-  request<{
-    pdfHash: string;
-    pdfSha256: string;
-    schema: Record<string, unknown>;
-    cacheHit: boolean;
-    extractionMethod: string;
-    schemaVersion: number;
-  }>('/api/pdf-filler/extract', {
+const startPdfTemplateSchemaExtraction = (params: { fileName: string; fileData: string }) =>
+  request<PdfExtractionStartResponse>('/api/pdf-filler/extract/jobs', {
     method: 'POST',
     body: JSON.stringify(params),
   });
+
+const fetchPdfTemplateSchemaExtractionJob = (jobId: string) =>
+  request<{ job: PdfExtractionJob }>(
+    `/api/pdf-filler/extract/jobs/${encodeURIComponent(jobId)}`
+  );
+
+export async function extractPdfTemplateSchema(params: {
+  fileName: string;
+  fileData: string;
+}): Promise<PdfExtractionResult> {
+  const started = await startPdfTemplateSchemaExtraction(params);
+  if (started.completed) return started.result;
+
+  const startedAt = Date.now();
+  let job = started.job;
+  while (job.status === 'queued' || job.status === 'running') {
+    if (Date.now() - startedAt > PDF_EXTRACTION_JOB_MAX_WAIT_MS) {
+      throw new ApiError('PDF analysis is still running. Please try this form again shortly.', 504);
+    }
+    await delay(PDF_EXTRACTION_JOB_POLL_MS);
+    job = (await fetchPdfTemplateSchemaExtractionJob(started.jobId)).job;
+  }
+
+  if (job.status === 'failed') {
+    throw new ApiError(job.error || job.message || 'Extraction failed', 502);
+  }
+  if (!job.result) {
+    throw new ApiError('Extraction completed without a schema result.', 502);
+  }
+  return job.result;
+}
 
 export const approvePdfMapping = (params: {
   extraction_run_id: string;
   pdf_sha256: string;
   source_filename?: string | null;
   prediction_json: Record<string, unknown>;
-  validated_fields: import('../../../../shared/mappingFeedback').ValidatedMappingField[];
+  validated_fields: ValidatedMappingField[];
   notes?: string | null;
 }) =>
   request<{
@@ -1249,7 +1384,6 @@ export const saveGlobalPdfTemplateSchema = (params: {
     }
   );
 
-/** Returns filled PDF bytes; caller uploads to Google Drive. */
 export async function fillPdfFormStream(params: {
   fileName: string;
   fileData: string;
