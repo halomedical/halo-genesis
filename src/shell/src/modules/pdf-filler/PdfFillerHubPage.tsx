@@ -62,18 +62,29 @@ export const PdfFillerHubPage: React.FC<PdfFillerHubPageProps> = ({ onToast }) =
           </button>
         </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {tab === 'form-studio' ? (
+      <div className="relative flex-1 min-h-0 overflow-hidden">
+        <div
+          className={tab === 'form-studio' ? 'absolute inset-0 flex min-h-0 flex-col' : 'hidden'}
+          aria-hidden={tab !== 'form-studio'}
+        >
           <FormIntelligencePage
             onToast={onToast}
             initialTemplateId={studioLoadTemplateId}
             onInitialTemplateLoaded={() => setStudioLoadTemplateId(null)}
           />
-        ) : tab === 'template-library' ? (
+        </div>
+        <div
+          className={tab === 'template-library' ? 'absolute inset-0 flex min-h-0 flex-col overflow-hidden' : 'hidden'}
+          aria-hidden={tab !== 'template-library'}
+        >
           <PdfTemplatesPage onToast={onToast} onOpenInStudio={openInStudio} />
-        ) : (
+        </div>
+        <div
+          className={tab === 'shared-forms' ? 'absolute inset-0 flex min-h-0 flex-col overflow-hidden' : 'hidden'}
+          aria-hidden={tab !== 'shared-forms'}
+        >
           <SharedFormsPage onToast={onToast} />
-        )}
+        </div>
       </div>
     </div>
   );

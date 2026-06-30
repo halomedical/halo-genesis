@@ -1,3 +1,5 @@
+import { enrichSchemaWithFieldInference } from '../../shared/pdfFieldInference';
+
 const SCHEMA_META_KEYS = new Set(['type', 'title', 'description', 'required', '$schema', 'properties']);
 
 function looksLikeFieldProp(value: unknown): boolean {
@@ -37,6 +39,10 @@ export function normalizeSidecarSchema(schema: Record<string, unknown>): Record<
 
 export type PdfSchemaFieldDescriptor = { id: string; title: string; type: string };
 
+export function prepareSidecarSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  return enrichSchemaWithFieldInference(normalizeSidecarSchema(schema));
+}
+
 /** Build sidecar autofill field list from a JSON Schema object. */
 export function schemaPropertiesToFields(
   schema: Record<string, unknown>
@@ -62,4 +68,26 @@ export function countSchemaProperties(schema: Record<string, unknown> | null | u
   const properties = normalized.properties;
   if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return 0;
   return Object.keys(properties as Record<string, unknown>).length;
+}
+
+/** Fields eligible for patient-summary Gemini autofill. */
+export function schemaFieldsForSummaryAutofill(
+  schema: Record<string, unknown>
+): PdfSchemaFieldDescriptor[] {
+  const normalized = normalizeSidecarSchema(schema);
+  const properties = normalized.properties;
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
+    return [];
+  }
+  const props = properties as Record<string, Record<string, unknown>>;
+  return Object.entries(props)
+    .filter(([, prop]) => {
+      const src = prop['x-data-source'];
+      return src === 'patient_summary' || src === undefined;
+    })
+    .map(([key, prop]) => ({
+      id: key,
+      title: typeof prop.title === 'string' && prop.title.trim() ? prop.title.trim() : key,
+      type: typeof prop.type === 'string' ? prop.type : 'string',
+    }));
 }

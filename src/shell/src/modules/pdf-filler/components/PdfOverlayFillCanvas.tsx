@@ -13,6 +13,7 @@ const NATIVE_FALLBACK_HEIGHT = 842;
 const MAX_SIDE_OVERFLOW_PT = 140;
 const SIDE_PAD_PT = 20;
 const ZOOM_STEPS = [50, 70, 85, 100, 115] as const;
+const MIN_CANVAS_HEIGHT_PX = 460;
 
 function horizontalOverflow(pageFields: ReturnType<typeof layoutFieldsFromSchema>, pageWidthPt: number) {
   let extraLeftPt = 0;
@@ -53,6 +54,7 @@ export const PdfOverlayFillCanvas: React.FC<PdfOverlayFillCanvasProps> = ({
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageWrapRef = useRef<HTMLDivElement>(null);
+  const didAutoFitRef = useRef(false);
   const [basePageWidthPx, setBasePageWidthPx] = useState(720);
   const [nativeWidth, setNativeWidth] = useState(NATIVE_FALLBACK_WIDTH);
   const [nativeHeight, setNativeHeight] = useState(NATIVE_FALLBACK_HEIGHT);
@@ -85,6 +87,18 @@ export const PdfOverlayFillCanvas: React.FC<PdfOverlayFillCanvasProps> = ({
     return () => ro.disconnect();
   }, [pdfFile, currentPage]);
 
+  useEffect(() => {
+    didAutoFitRef.current = false;
+  }, [pdfFile, currentPage]);
+
+  useEffect(() => {
+    if (didAutoFitRef.current || basePageWidthPx <= 0) return;
+    const stageWidth = scrollRef.current?.clientWidth ?? 0;
+    if (stageWidth <= 0) return;
+    setZoomPercent(zoomForFit(basePageWidthPx, Math.max(stageWidth - 48, 320)));
+    didAutoFitRef.current = true;
+  }, [basePageWidthPx, pdfFile, currentPage]);
+
   const { extraLeftPt, extraRightPt } = useMemo(
     () => horizontalOverflow(pageFields, nativeWidth),
     [nativeWidth, pageFields]
@@ -95,6 +109,7 @@ export const PdfOverlayFillCanvas: React.FC<PdfOverlayFillCanvasProps> = ({
   const stageWidthPx = renderedPageWidth + (extraLeftPt + extraRightPt) * scaleFactor;
   const pageOffsetPx = extraLeftPt * scaleFactor;
   const pageHeightPx = (renderedPageWidth / nativeWidth) * nativeHeight;
+  const visiblePageHeightPx = Math.max(MIN_CANVAS_HEIGHT_PX, pageHeightPx);
 
   const fieldPositions = useMemo(() => {
     const out = new Map<string, { x: number; y: number; width: number; height: number }>();
@@ -150,7 +165,7 @@ export const PdfOverlayFillCanvas: React.FC<PdfOverlayFillCanvasProps> = ({
     'h-full w-full min-w-0 rounded-sm border border-cyan-500/35 bg-white/90 px-0.5 text-[11px] leading-tight text-slate-900 shadow-none focus:border-cyan-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-cyan-500/40';
 
   return (
-    <div className="flex min-h-0 flex-1 basis-0 flex-col">
+    <div className="flex h-full min-h-0 flex-1 basis-0 flex-col overflow-hidden">
       <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 bg-slate-50/80 px-3 py-2">
         <button
           type="button"
@@ -184,7 +199,7 @@ export const PdfOverlayFillCanvas: React.FC<PdfOverlayFillCanvasProps> = ({
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 basis-0 overflow-x-auto overflow-y-auto p-4 bg-slate-100/60"
+        className="min-h-0 flex-1 basis-0 overflow-x-auto overflow-y-auto overscroll-y-contain p-4 bg-slate-100/60"
       >
         <div ref={pageWrapRef} className="w-full max-w-5xl mx-auto">
           <div className="relative shadow-lg ring-1 ring-slate-200/80 bg-white">
@@ -199,7 +214,7 @@ export const PdfOverlayFillCanvas: React.FC<PdfOverlayFillCanvasProps> = ({
             {fileUrl && (
               <div
                 className="relative"
-                style={{ width: stageWidthPx, minHeight: pageHeightPx, maxWidth: 'none' }}
+                style={{ width: stageWidthPx, minHeight: visiblePageHeightPx, maxWidth: 'none' }}
               >
                 <div
                   className="relative bg-white"

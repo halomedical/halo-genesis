@@ -45,7 +45,9 @@ declare module 'express-session' {
     refreshToken?: string;
     tokenExpiry?: number;
     userEmail?: string;
+    userName?: string;
     vpsJwt?: string;
+    appPersona?: 'clinician' | 'admin_staff';
   }
 }
 

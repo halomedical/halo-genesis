@@ -3,6 +3,7 @@ export const HALO_ROOT_NAME = 'Halo_Patients';
 export const PATIENT_SUBFOLDERS = [
   'Clerking Sheets',
   'Letters',
+  'Insurance Forms',
   'Radiology',
   'Labs',
   'Scanned Documents',

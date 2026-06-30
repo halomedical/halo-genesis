@@ -426,6 +426,37 @@ export async function uploadToDrive(
   return data.id;
 }
 
+export async function getOrCreateNamedSubfolder(
+  token: string,
+  parentFolderId: string,
+  folderName: string
+): Promise<string> {
+  return getOrCreateSubfolder(token, parentFolderId, folderName);
+}
+
+export async function uploadFileToDrive(
+  token: string,
+  folderId: string,
+  fileName: string,
+  mimeType: string,
+  buffer: Buffer,
+  appProperties?: Record<string, string>
+): Promise<{ id: string; name: string; url: string }> {
+  const id = await uploadToDrive(token, fileName, mimeType, folderId, buffer, appProperties);
+  return { id, name: fileName, url: '' };
+}
+
+export async function deleteDriveFile(token: string, fileId: string): Promise<void> {
+  const res = await fetchWithTimeout(`${driveApi}/files/${encodeURIComponent(fileId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`[Drive delete ${res.status}] ${text}`);
+  }
+}
+
 /**
  * Convert a DOCX buffer into a PDF buffer via a temporary Google Doc import.
  * The temporary Google Doc is always cleaned up before returning.

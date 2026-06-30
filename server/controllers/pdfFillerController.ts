@@ -25,13 +25,14 @@ import {
   isMappingCorrectionStoreConfigured,
 } from '../services/mappingCorrectionStore';
 import { decodeBase64Pdf, pipeWebStreamToExpress } from '../utils/streamUtils';
-import { countSchemaProperties, normalizeSidecarSchema } from '../utils/pdfSchemaUtils';
+import { countSchemaProperties, prepareSidecarSchema } from '../utils/pdfSchemaUtils';
 import { diffLayoutSchemas } from '../utils/schemaLayoutDiff';
 import {
   insertLayoutCorrection,
   isFormLayoutCorrectionStoreConfigured,
 } from '../services/formLayoutCorrectionStore';
 import { insertPdfExtractionTelemetry } from '../services/pdfExtractionTelemetryStore';
+import { createJob, getJob, updateJob, type StoredJob } from '../services/jobStore';
 
 function schemaMeta(schema: Record<string, unknown>): {
   extractionMethod: string;
@@ -41,6 +42,164 @@ function schemaMeta(schema: Record<string, unknown>): {
     extractionMethod: String(schema['x-extraction-method'] ?? 'unknown'),
     schemaVersion: Number(schema['x-schema-build-version'] ?? 1),
   };
+}
+
+type PdfExtractionJobInput = {
+  fileName: string;
+  pdfHash: string;
+  pdfSha256: string;
+  fileSizeBytes: number;
+};
+
+type PdfExtractionResult = {
+  pdfHash: string;
+  pdfSha256: string;
+  schema: Record<string, unknown>;
+  cacheHit: boolean;
+  extractionMethod: string;
+  schemaVersion: number;
+};
+
+function extractionActor(req: Request): StoredJob['actor'] {
+  const email = req.session.userEmail || 'unknown';
+  const name =
+    (typeof req.session.userName === 'string' && req.session.userName.trim()) ||
+    email ||
+    'Unknown';
+  return { email, name };
+}
+
+function serializeExtractionJob(job: StoredJob<unknown, PdfExtractionResult>) {
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    phase: job.phase,
+    progress: job.progress,
+    message: job.message,
+    result: job.result,
+    error: job.error,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    completedAt: job.completedAt,
+  };
+}
+
+function canViewExtractionJob(req: Request, job: StoredJob): boolean {
+  return job.actor.email === (req.session.userEmail || '');
+}
+
+async function loadCachedExtractionResult(
+  pdfHash: string,
+  pdfSha256: string
+): Promise<PdfExtractionResult | null> {
+  if (!isFormTemplateCacheConfigured()) return null;
+
+  const cached = await getGlobalSchemaByHash(pdfHash);
+  if (!cached) return null;
+
+  const cachedSchema = prepareSidecarSchema(cached.schema_json as Record<string, unknown>);
+  if (countSchemaProperties(cachedSchema) === 0) return null;
+
+  return {
+    pdfHash,
+    pdfSha256,
+    schema: cachedSchema,
+    cacheHit: true,
+    extractionMethod: cached.extraction_method,
+    schemaVersion: cached.schema_version,
+  };
+}
+
+async function extractPdfSchemaResult(
+  pdfBuffer: Buffer,
+  fileName: string,
+  pdfHash: string,
+  pdfSha256: string
+): Promise<PdfExtractionResult> {
+  const schema = prepareSidecarSchema(await extractSchemaFromPdf(pdfBuffer, fileName));
+  if (countSchemaProperties(schema) === 0) {
+    throw new Error(
+      'No form fields were detected in this PDF. Try a clearer blank form, or re-run after the mapper service is updated.'
+    );
+  }
+
+  const meta = schemaMeta(schema);
+  if (isFormTemplateCacheConfigured()) {
+    try {
+      await upsertGlobalSchema({
+        pdf_hash: pdfHash,
+        schema_json: schema,
+        extraction_method: meta.extractionMethod,
+        schema_version: meta.schemaVersion,
+      });
+    } catch (cacheErr) {
+      console.warn('[pdf-filler] cache upsert after extract (non-fatal):', cacheErr);
+    }
+  }
+
+  return {
+    pdfHash,
+    pdfSha256,
+    schema,
+    cacheHit: false,
+    extractionMethod: meta.extractionMethod,
+    schemaVersion: meta.schemaVersion,
+  };
+}
+
+function startExtractionJob(job: StoredJob<PdfExtractionJobInput>, pdfBuffer: Buffer): void {
+  void (async () => {
+    let success = false;
+    let extractionMethod: string | null = null;
+    const startedAt = performance.now();
+
+    try {
+      updateJob(job.id, {
+        status: 'running',
+        phase: 'extracting',
+        progress: 10,
+        message: 'Analyzing PDF fields.',
+      });
+
+      const result = await extractPdfSchemaResult(
+        pdfBuffer,
+        job.input.fileName,
+        job.input.pdfHash,
+        job.input.pdfSha256
+      );
+
+      success = true;
+      extractionMethod = result.extractionMethod;
+      updateJob<PdfExtractionResult>(job.id, {
+        status: 'succeeded',
+        phase: 'complete',
+        progress: 100,
+        message: `Field schema extracted (${countSchemaProperties(result.schema)} fields).`,
+        result,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Extraction failed.';
+      console.error('[pdf-filler/extract/job] error:', err);
+      updateJob(job.id, {
+        status: 'failed',
+        phase: 'failed',
+        progress: 100,
+        message,
+        error: message,
+      });
+    } finally {
+      void insertPdfExtractionTelemetry({
+        pdf_hash: job.input.pdfHash,
+        file_size_bytes: job.input.fileSizeBytes,
+        duration_ms: performance.now() - startedAt,
+        cache_hit: false,
+        extraction_method: extractionMethod,
+        flow: 'extract_api',
+        success,
+      });
+    }
+  })();
 }
 
 function sendControllerError(res: Response, status: number, err: unknown, fallback: string): void {
@@ -89,7 +248,7 @@ export async function handleExtractionRequest(req: Request, res: Response): Prom
     if (isFormTemplateCacheConfigured()) {
       const cached = await getGlobalSchemaByHash(pdfHash);
       if (cached) {
-        const cachedSchema = normalizeSidecarSchema(
+        const cachedSchema = prepareSidecarSchema(
           cached.schema_json as Record<string, unknown>
         );
         if (countSchemaProperties(cachedSchema) > 0) {
@@ -109,7 +268,7 @@ export async function handleExtractionRequest(req: Request, res: Response): Prom
       }
     }
 
-    const schema = normalizeSidecarSchema(await extractSchemaFromPdf(pdfBuffer, fileName));
+    const schema = prepareSidecarSchema(await extractSchemaFromPdf(pdfBuffer, fileName));
     if (countSchemaProperties(schema) === 0) {
       res.status(422).json({
         error: 'No form fields were detected in this PDF.',
@@ -159,6 +318,72 @@ export async function handleExtractionRequest(req: Request, res: Response): Prom
       });
     }
   }
+}
+
+/**
+ * Starts long-running extraction outside the Heroku request window.
+ * Cache hits still return immediately with a completed result.
+ */
+export async function handleExtractionJobRequest(req: Request, res: Response): Promise<void> {
+  const startedAt = performance.now();
+  try {
+    const fileName = sanitizeString(req.body.fileName, 255);
+    const fileData = req.body.fileData as string | undefined;
+
+    if (!fileName.toLowerCase().endsWith('.pdf')) {
+      res.status(400).json({ error: 'fileName must end with .pdf' });
+      return;
+    }
+
+    const pdfBuffer = decodeBase64Pdf(fileData ?? '');
+    const pdfHash = md5HexPdf(pdfBuffer);
+    const pdfSha256 = sha256HexPdf(pdfBuffer);
+    const cached = await loadCachedExtractionResult(pdfHash, pdfSha256);
+
+    if (cached) {
+      void insertPdfExtractionTelemetry({
+        pdf_hash: pdfHash,
+        file_size_bytes: pdfBuffer.length,
+        duration_ms: performance.now() - startedAt,
+        cache_hit: true,
+        extraction_method: cached.extractionMethod,
+        flow: 'extract_api',
+        success: true,
+      });
+      res.json({ completed: true, result: cached });
+      return;
+    }
+
+    const input: PdfExtractionJobInput = {
+      fileName,
+      pdfHash,
+      pdfSha256,
+      fileSizeBytes: pdfBuffer.length,
+    };
+    const job = createJob<PdfExtractionJobInput>('pdf-filler.extract', input, extractionActor(req));
+    startExtractionJob(job, pdfBuffer);
+
+    res.status(202).json({
+      completed: false,
+      jobId: job.id,
+      job: serializeExtractionJob(job as StoredJob<unknown, PdfExtractionResult>),
+    });
+  } catch (err) {
+    sendControllerError(res, 500, err, 'Extraction failed');
+  }
+}
+
+export function handleExtractionJobStatus(req: Request, res: Response): void {
+  const job = getJob<unknown, PdfExtractionResult>(String(req.params.jobId));
+  if (!job || job.type !== 'pdf-filler.extract') {
+    res.status(404).json({ error: 'Job not found.' });
+    return;
+  }
+  if (!canViewExtractionJob(req, job)) {
+    res.status(403).json({ error: 'You do not have access to this job.' });
+    return;
+  }
+  res.json({ job: serializeExtractionJob(job) });
 }
 
 /**

@@ -1,14 +1,20 @@
 import { useCallback, useMemo, useState } from 'react';
+import { enrichSchemaWithFieldInference } from '../../../../../../../shared/pdfFieldInference';
 import {
   addFieldToSchema,
+  alignFieldsInSchema,
   applyLayoutDeltaToSchema,
   applyLayoutToSchema,
   applyLayoutsToSchema,
   cloneSchema,
+  duplicateFieldsInSchema,
+  distributeFieldsInSchema,
   fieldMetaFromProperty,
   initialFormDataFromSchema,
   layoutFieldsFromSchema,
   removeFieldsFromSchema,
+  type AlignMode,
+  type DistributeMode,
   type FieldEditorType,
   type LayoutField,
   uniqueFieldKey,
@@ -72,8 +78,8 @@ export function useFormIntelligenceState() {
       setPdfSha256(result.pdfSha256);
       setExtractionRunId(result.extractionRunId);
       setPredictionJson(result.predictionJson);
-      setSchema(result.schema);
-      setBaselineSchema(cloneSchema(result.schema));
+      setSchema(enrichSchemaWithFieldInference(result.schema));
+      setBaselineSchema(cloneSchema(enrichSchemaWithFieldInference(result.schema)));
       setFormData(initialFormDataFromSchema(result.schema));
       setCacheHit(result.cacheHit);
       setExtractionMethod(result.extractionMethod);
@@ -96,8 +102,8 @@ export function useFormIntelligenceState() {
       setPdfSha256('');
       setExtractionRunId('');
       setPredictionJson(null);
-      setSchema(cloneSchema(params.schema));
-      setBaselineSchema(cloneSchema(params.schema));
+      setSchema(cloneSchema(enrichSchemaWithFieldInference(params.schema)));
+      setBaselineSchema(cloneSchema(enrichSchemaWithFieldInference(params.schema)));
       setFormData(initialFormDataFromSchema(params.schema));
       setCacheHit(null);
       setExtractionMethod(params.extractionMethod);
@@ -142,6 +148,9 @@ export function useFormIntelligenceState() {
       y: number;
       width: number;
       height: number;
+      dataSource?: import('../../../../../../../shared/pdfFieldInference').PdfFieldDataSource;
+      filledBy?: import('../../../../../../../shared/pdfFieldInference').PdfFieldFilledBy;
+      fillReview?: import('../../../../../../../shared/pdfFieldInference').PdfFillReview;
     }): string | null => {
       let newKey: string | null = null;
       setSchema((prev) => {
@@ -164,7 +173,16 @@ export function useFormIntelligenceState() {
   );
 
   const updateFieldMetaAction = useCallback(
-    (oldKey: string, params: { key: string; title: string; fieldType: FieldEditorType }) => {
+    (
+      oldKey: string,
+      params: {
+        key: string;
+        title: string;
+        fieldType: FieldEditorType;
+        dataSource: import('../../../../../../../shared/pdfFieldInference').PdfFieldDataSource;
+        filledBy: import('../../../../../../../shared/pdfFieldInference').PdfFieldFilledBy;
+      }
+    ) => {
       setSchema((prev) => {
         if (!prev) return prev;
         const next = updateFieldMeta(prev, oldKey, params);
@@ -191,6 +209,39 @@ export function useFormIntelligenceState() {
       const copy = { ...fd };
       for (const k of keys) delete copy[k];
       return copy;
+    });
+  }, []);
+
+  const duplicateFields = useCallback((keys: string[]): string[] => {
+    if (!schema) return [];
+    const layout = layoutFieldsFromSchema(schema);
+    const result = duplicateFieldsInSchema(schema, keys, layout);
+    if (result.newKeys.length === 0) return [];
+    const props = (result.schema.properties || {}) as Record<string, { type?: string }>;
+    setSchema(result.schema);
+    setFormData((fd) => {
+      const copy = { ...fd };
+      for (const k of result.newKeys) {
+        copy[k] = props[k]?.type === 'boolean' ? false : '';
+      }
+      return copy;
+    });
+    return result.newKeys;
+  }, [schema]);
+
+  const alignFields = useCallback((keys: string[], mode: AlignMode) => {
+    setSchema((prev) => {
+      if (!prev) return prev;
+      const layout = layoutFieldsFromSchema(prev);
+      return alignFieldsInSchema(prev, keys, mode, layout);
+    });
+  }, []);
+
+  const distributeFields = useCallback((keys: string[], mode: DistributeMode) => {
+    setSchema((prev) => {
+      if (!prev) return prev;
+      const layout = layoutFieldsFromSchema(prev);
+      return distributeFieldsInSchema(prev, keys, mode, layout);
     });
   }, []);
 
@@ -246,6 +297,9 @@ export function useFormIntelligenceState() {
     addField,
     updateFieldMeta: updateFieldMetaAction,
     removeFields,
+    duplicateFields,
+    alignFields,
+    distributeFields,
     getFieldMeta,
   };
 }

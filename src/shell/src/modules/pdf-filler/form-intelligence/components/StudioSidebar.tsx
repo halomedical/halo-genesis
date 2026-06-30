@@ -1,12 +1,14 @@
 import React from 'react';
-import { Loader2, Plus, Save, SquareDashedMousePointer, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Save, SquareDashedMousePointer, Trash2, Copy } from 'lucide-react';
 import { PdfDropzone } from './PdfDropzone';
-import { FieldEditorPanel, type PendingFieldRect } from './FieldEditorPanel';
+import { FieldEditorPanel, type FieldEditorSaveParams, type PendingFieldRect } from './FieldEditorPanel';
 import {
   fieldsOnPage,
   FIELD_TYPE_BOX_CLASSES,
   type FieldEditorType,
   type LayoutField,
+  type AlignMode,
+  type DistributeMode,
 } from '../utils/schemaLayout';
 import type { StudioCanvasMode } from '../state/useFormIntelligenceState';
 import { PdfExtractionProgress } from '../../components/PdfExtractionProgress';
@@ -49,12 +51,22 @@ interface StudioSidebarProps {
   canSave: boolean;
   onNudge: (dx: number, dy: number) => void;
   onDeleteSelected: () => void;
-  onPendingFieldSave: (params: { title: string; key: string; fieldType: FieldEditorType }) => void;
+  onDuplicateSelected: () => void;
+  onAlignSelected: (mode: AlignMode) => void;
+  onDistributeSelected: (mode: DistributeMode) => void;
+  onPendingFieldSave: (params: FieldEditorSaveParams) => void;
   onPendingFieldCancel: () => void;
-  onEditFieldSave: (params: { title: string; key: string; fieldType: FieldEditorType }) => void;
+  onEditFieldSave: (params: FieldEditorSaveParams) => void;
   onEditFieldCancel: () => void;
   onOpenFieldEditor: () => void;
-  getFieldMeta: (key: string) => { key: string; title: string; fieldType: FieldEditorType } | null;
+  getFieldMeta: (key: string) => {
+    key: string;
+    title: string;
+    fieldType: FieldEditorType;
+    dataSource: import('../../../../../../../shared/pdfFieldInference').PdfFieldDataSource;
+    filledBy: import('../../../../../../../shared/pdfFieldInference').PdfFieldFilledBy;
+    fillReview: import('../../../../../../../shared/pdfFieldInference').PdfFillReview;
+  } | null;
 }
 
 export const StudioSidebar: React.FC<StudioSidebarProps> = ({
@@ -88,6 +100,9 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
   canSave,
   onNudge,
   onDeleteSelected,
+  onDuplicateSelected,
+  onAlignSelected,
+  onDistributeSelected,
   onPendingFieldSave,
   onPendingFieldCancel,
   onEditFieldSave,
@@ -131,14 +146,24 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
             {canvasMode === 'draw' ? 'Drawing…' : 'Add field'}
           </button>
           {selectedFieldKeys.length > 0 && (
-            <button
-              type="button"
-              onClick={onDeleteSelected}
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold border border-red-200 text-red-700 bg-white hover:bg-red-50"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onDuplicateSelected}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold border border-slate-200 text-slate-700 bg-white hover:bg-slate-50"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Duplicate
+              </button>
+              <button
+                type="button"
+                onClick={onDeleteSelected}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold border border-red-200 text-red-700 bg-white hover:bg-red-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            </>
           )}
         </div>
       )}
@@ -151,6 +176,50 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
           <button type="button" className="px-2 py-1 rounded border border-slate-200 bg-white" onClick={() => onNudge(2, 0)}>→</button>
           <button type="button" className="px-2 py-1 rounded border border-slate-200 bg-white" onClick={() => onNudge(0, -2)}>↑</button>
           <button type="button" className="px-2 py-1 rounded border border-slate-200 bg-white" onClick={() => onNudge(0, 2)}>↓</button>
+        </div>
+      )}
+
+      {selectedFieldKeys.length >= 2 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-medium text-slate-600">Align</span>
+          {(
+            [
+              ['left', 'Left'],
+              ['right', 'Right'],
+              ['top', 'Top'],
+              ['bottom', 'Bottom'],
+              ['centerH', 'Center H'],
+              ['centerV', 'Center V'],
+            ] as const
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              className="px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50"
+              onClick={() => onAlignSelected(mode)}
+            >
+              {label}
+            </button>
+          ))}
+          {selectedFieldKeys.length >= 3 && (
+            <>
+              <span className="text-slate-400">|</span>
+              <button
+                type="button"
+                className="px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50"
+                onClick={() => onDistributeSelected('horizontal')}
+              >
+                Distribute H
+              </button>
+              <button
+                type="button"
+                className="px-2 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50"
+                onClick={() => onDistributeSelected('vertical')}
+              >
+                Distribute V
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -168,6 +237,9 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
           initialTitle={editMeta.title}
           initialKey={editMeta.key}
           initialType={editMeta.fieldType}
+          initialDataSource={editMeta.dataSource}
+          initialFilledBy={editMeta.filledBy}
+          fillReview={editMeta.fillReview}
           onCancel={onEditFieldCancel}
           onSave={onEditFieldSave}
         />

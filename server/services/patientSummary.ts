@@ -27,6 +27,7 @@ import type {
   PatientSummaryTimelineEntry,
   ScribeSession,
 } from '../../shared/types';
+import { EMPTY_PATIENT_SUMMARY_STRUCTURED_FACTS } from '../../shared/types';
 
 const SUMMARY_MARKDOWN_FILE_NAME = 'patient-summary.md';
 const SUMMARY_STATE_FILE_NAME = 'halo_patient_summary_state.json';
@@ -107,6 +108,8 @@ function createEmptySummaryState(patientId: string, patientName: string): Patien
     patientName,
     lastUpdatedAt: null,
     dirty: true,
+    profile: { fullName: patientName },
+    structuredFacts: { ...EMPTY_PATIENT_SUMMARY_STRUCTURED_FACTS },
     snapshot: [],
     timeline: [],
     processedSources: {},
@@ -179,6 +182,17 @@ function normalizeSummaryState(
     patientName: typeof obj.patientName === 'string' && obj.patientName.trim() ? obj.patientName : patientName,
     lastUpdatedAt: typeof obj.lastUpdatedAt === 'string' ? obj.lastUpdatedAt : null,
     dirty: typeof obj.dirty === 'boolean' ? obj.dirty : base.dirty,
+    profile:
+      obj.profile && typeof obj.profile === 'object'
+        ? { ...base.profile, ...(obj.profile as PatientSummaryState['profile']) }
+        : base.profile,
+    structuredFacts:
+      obj.structuredFacts && typeof obj.structuredFacts === 'object'
+        ? {
+            ...EMPTY_PATIENT_SUMMARY_STRUCTURED_FACTS,
+            ...(obj.structuredFacts as PatientSummaryState['structuredFacts']),
+          }
+        : base.structuredFacts,
     snapshot: normalizeBulletList(obj.snapshot, 5),
     timeline,
     processedSources,
@@ -517,11 +531,81 @@ export async function refreshPatientSummaryInBackground(
   token: string,
   patientId: string
 ): Promise<void> {
+  triggerPatientSummarySync(token, patientId, 'background_refresh');
+  const entry = runningSummarySyncs.get(patientId);
+  if (!entry) return;
   try {
-    await ensurePatientSummaryUpToDate(token, patientId);
+    await entry.promise;
   } catch (err) {
     console.error(`[summary] Background refresh failed for ${patientId}:`, err);
   }
+}
+
+const runningSummarySyncs = new Map<string, { startedAt: string; promise: Promise<void> }>();
+
+export type PatientSummarySyncTriggerResult = {
+  patientId: string;
+  status: 'queued' | 'running';
+  startedAt: string;
+};
+
+export async function readExistingPatientSummaryMarkdown(
+  token: string,
+  patientId: string
+): Promise<string | null> {
+  const summaryFile = await findFileInFolder(token, patientId, SUMMARY_MARKDOWN_FILE_NAME);
+  if (!summaryFile) return null;
+  const markdown = await downloadTextFromDrive(token, summaryFile.id);
+  return markdown.trim() ? markdown : null;
+}
+
+export async function readExistingPatientSummaryState(
+  token: string,
+  patientId: string
+): Promise<PatientSummaryState | null> {
+  const stateFile = await findFileInFolder(token, patientId, SUMMARY_STATE_FILE_NAME, 'application/json');
+  if (!stateFile) return null;
+  const patientName = await resolvePatientName(token, patientId);
+  const raw = await readJsonFileFromDrive<unknown>(token, stateFile.id, null);
+  if (!raw) return null;
+  return normalizeSummaryState(raw, patientId, patientName);
+}
+
+export function triggerPatientSummarySync(
+  token: string,
+  patientId: string,
+  source = 'unspecified'
+): PatientSummarySyncTriggerResult {
+  const existing = runningSummarySyncs.get(patientId);
+  if (existing) {
+    return {
+      patientId,
+      status: 'running',
+      startedAt: existing.startedAt,
+    };
+  }
+
+  const startedAt = new Date().toISOString();
+  const promise = ensurePatientSummaryUpToDate(token, patientId)
+    .then(() => {
+      console.info(`[summary] Pull sync completed for ${patientId} (${source})`);
+    })
+    .catch((err) => {
+      console.error(`[summary] Pull sync failed for ${patientId} (${source}):`, err);
+    })
+    .finally(() => {
+      const current = runningSummarySyncs.get(patientId);
+      if (current?.promise === promise) {
+        runningSummarySyncs.delete(patientId);
+      }
+    });
+
+  runningSummarySyncs.set(patientId, { startedAt, promise });
+  return {
+    patientId,
+    status: 'queued',
+    startedAt,
+  };
 }
 
 /** Merge human PDF form deltas into summary state, snapshot, and markdown. */

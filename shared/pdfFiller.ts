@@ -22,7 +22,7 @@ export const PDF_DOCUMENT_TYPE_LABELS: Record<PdfDocumentType, string> = {
 
 /** Where filled PDFs are filed on the patient Drive tree. */
 export const PDF_DOCUMENT_TYPE_TO_PATIENT_SUBFOLDER: Record<PdfDocumentType, PatientSubfolder> = {
-  insurance_form: 'Scanned Documents',
+  insurance_form: 'Insurance Forms',
   consent: 'Letters',
   referral: 'Subspecialist Referral',
   clinical_form: 'Clerking Sheets',

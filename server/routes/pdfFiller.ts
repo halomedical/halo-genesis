@@ -5,11 +5,13 @@ import {
   downloadFileBuffer,
   getOrCreatePatientSubfolder,
   getOrCreatePracticeAdminPdfDocumentsFolder,
-  sanitizeString,
   uploadToDrive,
 } from '../services/drive';
+import { sanitizeString } from '../services/drive';
 import {
   handleExtractionRequest,
+  handleExtractionJobRequest,
+  handleExtractionJobStatus,
   handleFillRequest,
   handleApproveMapping,
   handlePublishPracticeTemplate,
@@ -17,17 +19,21 @@ import {
 } from '../controllers/pdfFillerController';
 import { md5HexPdf, isValidPdfHash } from '../services/pdfHash';
 import { extractDataFromPatientSummary } from '../services/pdfFillerAutofill';
+import { GEMINI_TIMEOUT_MS } from '../services/gemini';
 import {
-  autofillFromPatientSummary,
   extractSchemaFromPdf,
   fillPdfViaSidecar,
   pdfFillerHealthCheck,
 } from '../services/pdfFillerClient';
 import {
-  ensurePatientSummaryUpToDate,
   enrichPatientSummaryFromFormSubmission,
+  readExistingPatientSummaryMarkdown,
+  readExistingPatientSummaryState,
+  triggerPatientSummarySync,
 } from '../services/patientSummary';
-import { schemaPropertiesToFields } from '../utils/pdfSchemaUtils';
+import { fieldsNeedingLlm, prefillFromSummaryState } from '../services/pdfSummaryPrefill';
+import { schemaPropertiesToFields, schemaFieldsForSummaryAutofill } from '../utils/pdfSchemaUtils';
+import { resolveClinicianProfile } from '../services/clinicianProfile';
 import { savePracticePdfTemplate, updatePracticePdfTemplateMetadata, importSharedFormSchemaToPractice } from '../services/practicePdfTemplateStore';
 import {
   getEstimatedExtractionDurationMs,
@@ -44,6 +50,12 @@ import {
   PDF_DOCUMENT_TYPE_TO_PATIENT_SUBFOLDER,
   type PdfDocumentType,
 } from '../../shared/pdfFiller';
+import type { SignatureOptions } from '../../shared/documentSignatures';
+import {
+  applySignatureToPdf,
+  resolveDocumentSignature,
+  signatureAppProperties,
+} from '../services/documentSignatureService';
 import { validateInsuranceCompanyForDocumentType } from '../../shared/insuranceCompanies';
 import {
   inferTemplateMetadataFromPdf,
@@ -56,19 +68,155 @@ import {
   listPublicCatalogForPack,
   listPublicSharedFormCatalog,
 } from '../services/sharedFormCatalogStore';
+import { requireAnyPersona, requireAdminStaffPersona } from '../middleware/requirePersona';
+import { createJob, getJob, updateJob, type StoredJob } from '../services/jobStore';
+import { isConsultant } from '../services/userStore';
 
 const router = Router();
 router.use(requireAuth);
 
 const MAX_FILE_SIZE_MB = 25;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+/** Matches sidecar autofill budget: one Gemini window plus HTTP slack. */
+const AUTOFILL_RESPONSE_TIMEOUT_MS = GEMINI_TIMEOUT_MS + 30_000;
+const AUTOFILL_TIMEOUT_MESSAGE = 'PDF_FILLER_AUTOFILL_TIMEOUT';
+
+type PdfAutofillPendingReason = 'summary_building' | 'autofill_slow';
+const TEMPLATE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+type PdfFillSaveInput = {
+  patientFolderId: string;
+  templateId: string;
+  answers: Record<string, unknown>;
+  newlyAddedData?: Record<string, unknown>;
+  signatureOptions?: SignatureOptions;
+};
+
+type PdfFillSaveResult = {
+  fileId: string;
+  name: string;
+  subfolder: string;
+  templateId: string;
+  summaryFieldsUpdated?: number;
+  summaryPending?: boolean;
+  summaryWarning?: string;
+  timingsMs?: Record<string, number>;
+};
+
+type PdfFillSaveActor = {
+  email: string;
+  name: string;
+};
+
+type PdfFillSaveProgress = (phase: string, progress: number, message: string) => void | Promise<void>;
+
+type LoadedPdfTemplate = {
+  entry: NonNullable<ReturnType<typeof findTemplateEntry>>;
+  pdfBuffer: Buffer;
+  schema: Record<string, unknown>;
+};
+
+const templateCache = new Map<string, { loadedAt: number; template: LoadedPdfTemplate }>();
+
+type CachedTemplateSchema = {
+  loadedAt: number;
+  schemaDriveFileId: string;
+  schema: Record<string, unknown>;
+};
+const templateSchemaCache = new Map<string, CachedTemplateSchema>();
+
+function invalidateTemplateCaches(templateId: string): void {
+  templateSchemaCache.delete(templateId);
+  templateCache.delete(templateId);
+}
 
 function safeBaseName(fileName: string): string {
   const base = fileName.replace(/\.pdf$/i, '').trim() || 'template';
   return base.replace(/[^\w\s.-]/g, '_').slice(0, 120);
 }
 
-router.get('/extract/estimate', async (req: Request, res: Response) => {
+function getPdfFillActor(req: Request): PdfFillSaveActor {
+  const name =
+    (typeof req.session.userName === 'string' && req.session.userName.trim()) ||
+    req.session.userEmail ||
+    'Unknown';
+  return {
+    email: req.session.userEmail || 'unknown',
+    name,
+  };
+}
+
+function validatePdfFillSaveInput(
+  patientFolderId: string,
+  body: Record<string, unknown>
+): PdfFillSaveInput {
+  const templateId = sanitizeString(body.templateId, 64);
+  const answers = body.answers as Record<string, unknown> | undefined;
+  const newlyAddedData = body.newlyAddedData as Record<string, unknown> | undefined;
+  const signatureOptions = body.signatureOptions as SignatureOptions | undefined;
+
+  if (!templateId) {
+    throw Object.assign(new Error('templateId is required.'), { status: 400 });
+  }
+  if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
+    throw Object.assign(new Error('answers object is required.'), { status: 400 });
+  }
+
+  return {
+    patientFolderId,
+    templateId,
+    answers,
+    newlyAddedData,
+    signatureOptions,
+  };
+}
+
+function createPhaseTimer(label: string): {
+  timings: Record<string, number>;
+  time<T>(phase: string, work: () => Promise<T> | T): Promise<T>;
+  log(): void;
+} {
+  const timings: Record<string, number> = {};
+  const startedAt = performance.now();
+  return {
+    timings,
+    async time<T>(phase: string, work: () => Promise<T> | T): Promise<T> {
+      const phaseStartedAt = performance.now();
+      try {
+        return await work();
+      } finally {
+        timings[phase] = Math.round(performance.now() - phaseStartedAt);
+      }
+    },
+    log() {
+      timings.total = Math.round(performance.now() - startedAt);
+      console.info(`[pdf-filler] ${label} timings:`, timings);
+    },
+  };
+}
+
+function serializePdfFillJob(job: StoredJob<unknown, PdfFillSaveResult>) {
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    phase: job.phase,
+    progress: job.progress,
+    message: job.message,
+    result: job.result,
+    error: job.error,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    completedAt: job.completedAt,
+  };
+}
+
+function canViewPdfFillJob(req: Request, job: StoredJob): boolean {
+  const email = req.session.userEmail || '';
+  return job.actor.email === email || isConsultant(email);
+}
+
+router.get('/extract/estimate', requireAdminStaffPersona, async (req: Request, res: Response) => {
   try {
     const fileSizeRaw = Number(req.query.fileSizeBytes);
     const flowRaw = String(req.query.flow || 'extract_api');
@@ -97,11 +245,13 @@ router.get('/extract/estimate', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/extract', (req, res) => void handleExtractionRequest(req, res));
-router.post('/approve-mapping', (req, res) => void handleApproveMapping(req, res));
-router.post('/schema/global', (req, res) => void handleSaveTemplate(req, res));
-router.post('/templates/publish', (req, res) => void handlePublishPracticeTemplate(req, res));
-router.post('/fill', (req, res) => void handleFillRequest(req, res));
+router.post('/extract', requireAdminStaffPersona, (req, res) => void handleExtractionRequest(req, res));
+router.post('/extract/jobs', requireAdminStaffPersona, (req, res) => void handleExtractionJobRequest(req, res));
+router.get('/extract/jobs/:jobId', requireAdminStaffPersona, (req, res) => handleExtractionJobStatus(req, res));
+router.post('/approve-mapping', requireAdminStaffPersona, (req, res) => void handleApproveMapping(req, res));
+router.post('/schema/global', requireAdminStaffPersona, (req, res) => void handleSaveTemplate(req, res));
+router.post('/templates/publish', requireAdminStaffPersona, (req, res) => void handlePublishPracticeTemplate(req, res));
+router.post('/fill', requireAnyPersona, (req, res) => void handleFillRequest(req, res));
 
 router.get('/health', async (_req: Request, res: Response) => {
   const sidecarOk = await pdfFillerHealthCheck();
@@ -111,7 +261,16 @@ router.get('/health', async (_req: Request, res: Response) => {
   });
 });
 
-router.get('/templates', async (req: Request, res: Response) => {
+router.get('/clinician-profile', requireAnyPersona, (req: Request, res: Response) => {
+  const profile = resolveClinicianProfile(req);
+  if (!profile) {
+    res.status(401).json({ error: 'Not signed in.' });
+    return;
+  }
+  res.json({ profile });
+});
+
+router.get('/templates', requireAnyPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const folderId = await getOrCreatePracticeAdminPdfDocumentsFolder(token);
@@ -123,7 +282,7 @@ router.get('/templates', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/templates/:templateId/schema', async (req: Request, res: Response) => {
+router.get('/templates/:templateId/schema', requireAnyPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const templateId = String(req.params.templateId);
@@ -143,7 +302,7 @@ router.get('/templates/:templateId/schema', async (req: Request, res: Response) 
   }
 });
 
-router.get('/templates/:templateId/pdf', async (req: Request, res: Response) => {
+router.get('/templates/:templateId/pdf', requireAnyPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const templateId = String(req.params.templateId);
@@ -168,7 +327,7 @@ router.get('/templates/:templateId/pdf', async (req: Request, res: Response) => 
   }
 });
 
-router.post('/templates', async (req: Request, res: Response) => {
+router.post('/templates', requireAdminStaffPersona, async (req: Request, res: Response) => {
   const startedAt = performance.now();
   let fileSizeBytes = 0;
   let pdfHash: string | null = null;
@@ -247,6 +406,7 @@ router.post('/templates', async (req: Request, res: Response) => {
     });
 
     success = true;
+    invalidateTemplateCaches(entry.templateId);
     res.json({ template: entry, inferredMetadata: merged.inferred });
   } catch (err) {
     console.error('[pdf-filler] upload template:', err);
@@ -271,7 +431,7 @@ router.post('/templates', async (req: Request, res: Response) => {
   }
 });
 
-router.patch('/templates/:templateId', async (req: Request, res: Response) => {
+router.patch('/templates/:templateId', requireAdminStaffPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const templateId = String(req.params.templateId);
@@ -318,7 +478,7 @@ router.patch('/templates/:templateId', async (req: Request, res: Response) => {
   }
 });
 
-router.delete('/templates/:templateId', async (req: Request, res: Response) => {
+router.delete('/templates/:templateId', requireAdminStaffPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const templateId = String(req.params.templateId);
@@ -353,13 +513,34 @@ async function resolveTemplateEntry(token: string, templateId: string) {
   return entry;
 }
 
-async function loadTemplateSchema(
+async function loadTemplateSchemaCached(
   token: string,
   templateId: string
 ): Promise<Record<string, unknown>> {
   const entry = await resolveTemplateEntry(token, templateId);
+  const cached = templateSchemaCache.get(templateId);
+  if (
+    cached &&
+    Date.now() - cached.loadedAt < TEMPLATE_CACHE_TTL_MS &&
+    cached.schemaDriveFileId === entry.schemaDriveFileId
+  ) {
+    return cached.schema;
+  }
   const schemaBuffer = await downloadFileBuffer(token, entry.schemaDriveFileId);
-  return JSON.parse(schemaBuffer.toString('utf-8')) as Record<string, unknown>;
+  const schema = JSON.parse(schemaBuffer.toString('utf-8')) as Record<string, unknown>;
+  templateSchemaCache.set(templateId, {
+    loadedAt: Date.now(),
+    schemaDriveFileId: entry.schemaDriveFileId,
+    schema,
+  });
+  return schema;
+}
+
+async function loadTemplateSchema(
+  token: string,
+  templateId: string
+): Promise<Record<string, unknown>> {
+  return loadTemplateSchemaCached(token, templateId);
 }
 
 async function loadTemplatePdfAndSchema(
@@ -382,30 +563,272 @@ async function loadTemplatePdfAndSchema(
   return { entry, pdfBuffer, schema };
 }
 
-function isSidecarRouteMissing(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    (err.message.includes('(404)') || err.message.includes('"Not Found"'))
-  );
+async function loadTemplatePdfAndSchemaCached(
+  token: string,
+  templateId: string
+): Promise<LoadedPdfTemplate> {
+  const entry = await resolveTemplateEntry(token, templateId);
+  const cached = templateCache.get(templateId);
+  if (
+    cached &&
+    Date.now() - cached.loadedAt < TEMPLATE_CACHE_TTL_MS &&
+    cached.template.entry.schemaDriveFileId === entry.schemaDriveFileId &&
+    cached.template.entry.pdfDriveFileId === entry.pdfDriveFileId
+  ) {
+    return cached.template;
+  }
+
+  const template = await loadTemplatePdfAndSchema(token, templateId);
+  templateCache.set(templateId, { loadedAt: Date.now(), template });
+  templateSchemaCache.set(templateId, {
+    loadedAt: Date.now(),
+    schemaDriveFileId: template.entry.schemaDriveFileId,
+    schema: template.schema,
+  });
+  return template;
 }
 
-async function autofillFieldValues(
-  markdown: string,
-  schemaFields: ReturnType<typeof schemaPropertiesToFields>,
-  patientFolderId: string
-): Promise<Record<string, string | null>> {
+function startSummaryEnrichment(params: {
+  token: string;
+  patientFolderId: string;
+  templateId: string;
+  templateDisplayName: string;
+  newlyAddedData: Record<string, unknown>;
+  schemaFields: ReturnType<typeof schemaPropertiesToFields>;
+  onComplete?: (fieldsWritten: number) => void;
+  onError?: (message: string) => void;
+}): void {
+  void (async () => {
+    try {
+      const enrichResult = await enrichPatientSummaryFromFormSubmission(params.token, params.patientFolderId, {
+        templateId: params.templateId,
+        templateDisplayName: params.templateDisplayName,
+        newlyAddedData: params.newlyAddedData,
+        schemaFields: params.schemaFields,
+      });
+      params.onComplete?.(enrichResult.fieldsWritten);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Summary enrichment failed.';
+      console.error('[pdf-filler] background summary enrichment failed:', err);
+      params.onError?.(message);
+    }
+  })();
+}
+
+async function performPatientPdfFillSave(params: {
+  token: string;
+  input: PdfFillSaveInput;
+  actor: PdfFillSaveActor;
+  onProgress?: PdfFillSaveProgress;
+  waitForSummary?: boolean;
+}): Promise<PdfFillSaveResult> {
+  const { token, input, actor, onProgress, waitForSummary = false } = params;
+  const timer = createPhaseTimer(`fill ${input.templateId}`);
+  let result: PdfFillSaveResult | null = null;
+
   try {
-    return await autofillFromPatientSummary(markdown, schemaFields, patientFolderId);
-  } catch (err) {
-    if (!isSidecarRouteMissing(err)) throw err;
-    console.warn(
-      '[pdf-filler] Sidecar /api/autofill not available — using Genesis Gemini autofill'
+    await onProgress?.('loading_template', 10, 'Loading form template.');
+    let loaded: LoadedPdfTemplate;
+    try {
+      loaded = await timer.time('load_template', () =>
+        loadTemplatePdfAndSchemaCached(token, input.templateId)
+      );
+    } catch (e) {
+      if (e instanceof TemplateNotFoundError) {
+        throw Object.assign(new Error('Template not found.'), { status: 404 });
+      }
+      throw e;
+    }
+
+    const { entry, pdfBuffer, schema } = loaded;
+    const schemaFields = schemaPropertiesToFields(schema);
+    const hasNewData =
+      input.newlyAddedData &&
+      typeof input.newlyAddedData === 'object' &&
+      Object.keys(input.newlyAddedData).length > 0;
+
+    await onProgress?.('filling_pdf', 30, 'Filling PDF.');
+    const [filledPdf, signature, targetFolderId] = await timer.time('fill_prepare_parallel', () =>
+      Promise.all([
+        fillPdfViaSidecar(pdfBuffer, schema, input.answers),
+        resolveDocumentSignature({
+          token,
+          email: actor.email,
+          actorName: actor.name,
+          policyKey: 'pdf_filler',
+          options: input.signatureOptions,
+        }),
+        getOrCreatePatientSubfolder(
+          token,
+          input.patientFolderId,
+          PDF_DOCUMENT_TYPE_TO_PATIENT_SUBFOLDER[entry.documentType]
+        ),
+      ])
     );
-    return extractDataFromPatientSummary(schemaFields, markdown);
+
+    await onProgress?.('signing', 55, 'Applying signature settings.');
+    const signedPdf = await timer.time('apply_signature', () => applySignatureToPdf(filledPdf, signature));
+
+    const subfolderName = PDF_DOCUMENT_TYPE_TO_PATIENT_SUBFOLDER[entry.documentType];
+    const outName = `${entry.displayName} — filled ${new Date().toISOString().slice(0, 10)}.pdf`;
+
+    await onProgress?.('uploading_drive', 75, 'Saving PDF to Google Drive.');
+    const fileId = await timer.time('upload_drive', () =>
+      uploadToDrive(
+        token,
+        outName,
+        'application/pdf',
+        targetFolderId,
+        signedPdf,
+        {
+          halo_pdf_filled: '1',
+          template_id: input.templateId,
+          ...signatureAppProperties(signature),
+        }
+      )
+    );
+
+    result = {
+      fileId,
+      name: outName,
+      subfolder: subfolderName,
+      templateId: input.templateId,
+      summaryPending: Boolean(hasNewData),
+    };
+
+    if (hasNewData && input.newlyAddedData) {
+      const runSummary = async () => {
+        await onProgress?.('updating_summary', 92, 'Updating patient summary.');
+        const enrichResult = await timer.time('summary_enrichment', () =>
+          enrichPatientSummaryFromFormSubmission(token, input.patientFolderId, {
+            templateId: input.templateId,
+            templateDisplayName: entry.displayName,
+            newlyAddedData: input.newlyAddedData!,
+            schemaFields,
+          })
+        );
+        result!.summaryFieldsUpdated = enrichResult.fieldsWritten;
+        result!.summaryPending = false;
+      };
+
+      if (waitForSummary) {
+        try {
+          await runSummary();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Summary enrichment failed.';
+          console.error('[pdf-filler] summary enrichment failed:', err);
+          result.summaryWarning = 'Document saved, but the patient summary could not be updated.';
+          result.summaryPending = false;
+          result.timingsMs = { ...timer.timings };
+          result.timingsMs.summary_error = 1;
+          result.summaryFieldsUpdated = 0;
+          result.summaryWarning = message;
+        }
+      } else {
+        startSummaryEnrichment({
+          token,
+          patientFolderId: input.patientFolderId,
+          templateId: input.templateId,
+          templateDisplayName: entry.displayName,
+          newlyAddedData: input.newlyAddedData,
+          schemaFields,
+          onComplete: (fieldsWritten) => {
+            console.info(
+              `[pdf-filler] background summary enrichment complete for ${input.patientFolderId}: ${fieldsWritten} fields`
+            );
+          },
+        });
+      }
+    }
+
+    await onProgress?.('complete', 100, 'PDF saved.');
+    return result;
+  } finally {
+    timer.log();
+    if (result) {
+      result.timingsMs = { ...timer.timings };
+    }
   }
 }
 
-router.post('/patients/:patientId/autofill', async (req: Request, res: Response) => {
+function startPatientPdfFillJob(job: StoredJob<PdfFillSaveInput>, token: string): void {
+  void (async () => {
+    try {
+      updateJob(job.id, {
+        status: 'running',
+        phase: 'starting',
+        progress: 5,
+        message: 'Starting PDF save.',
+      });
+
+      const result = await performPatientPdfFillSave({
+        token,
+        input: job.input,
+        actor: job.actor,
+        waitForSummary: false,
+        onProgress: (phase, progress, message) => {
+          updateJob(job.id, {
+            status: 'running',
+            phase,
+            progress,
+            message,
+          });
+        },
+      });
+
+      updateJob<PdfFillSaveResult>(job.id, {
+        status: 'succeeded',
+        phase: 'complete',
+        progress: 100,
+        message: result.summaryPending
+          ? 'PDF saved. Patient summary is updating in the background.'
+          : 'PDF saved.',
+        result,
+        error: result.summaryWarning || null,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'PDF save failed.';
+      console.error('[pdf-filler/fill/job] error:', err);
+      updateJob(job.id, {
+        status: 'failed',
+        phase: 'failed',
+        progress: 100,
+        message,
+        error: message,
+      });
+    }
+  })();
+}
+
+function emptyAutofillValues(
+  schemaFields: ReturnType<typeof schemaPropertiesToFields>
+): Record<string, string | null> {
+  const values: Record<string, string | null> = {};
+  for (const field of schemaFields) {
+    if (field.id) values[field.id] = null;
+  }
+  return values;
+}
+
+async function withAutofillResponseTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(AUTOFILL_TIMEOUT_MESSAGE)),
+          AUTOFILL_RESPONSE_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+router.post('/patients/:patientId/autofill', requireAnyPersona, async (req: Request, res: Response) => {
+  let schemaFields: ReturnType<typeof schemaPropertiesToFields> = [];
   try {
     const token = req.session.accessToken!;
     const patientFolderId = String(req.params.patientId);
@@ -416,9 +839,30 @@ router.post('/patients/:patientId/autofill', async (req: Request, res: Response)
       return;
     }
 
+    let loadSchemaMs = 0;
+    let readSummaryMs = 0;
+
+    const schemaPromise = (async () => {
+      const t0 = performance.now();
+      const s = await loadTemplateSchemaCached(token, templateId);
+      loadSchemaMs = Math.round(performance.now() - t0);
+      return s;
+    })();
+
+    const summaryPromise = (async () => {
+      const t0 = performance.now();
+      const [state, markdown] = await Promise.all([
+        readExistingPatientSummaryState(token, patientFolderId),
+        readExistingPatientSummaryMarkdown(token, patientFolderId),
+      ]);
+      readSummaryMs = Math.round(performance.now() - t0);
+      return { state, markdown };
+    })();
+
     let schema: Record<string, unknown>;
+    let summaryBundle: { state: Awaited<ReturnType<typeof readExistingPatientSummaryState>>; markdown: string | null };
     try {
-      schema = await loadTemplateSchema(token, templateId);
+      [schema, summaryBundle] = await Promise.all([schemaPromise, summaryPromise]);
     } catch (e) {
       if (e instanceof TemplateNotFoundError) {
         res.status(404).json({ error: 'Template not found.' });
@@ -427,94 +871,150 @@ router.post('/patients/:patientId/autofill', async (req: Request, res: Response)
       throw e;
     }
 
-    const { markdown } = await ensurePatientSummaryUpToDate(token, patientFolderId);
-    const schemaFields = schemaPropertiesToFields(schema);
-    const values = await autofillFieldValues(markdown, schemaFields, patientFolderId);
+    schemaFields = schemaFieldsForSummaryAutofill(schema);
+    const { state: summaryState, markdown } = summaryBundle;
 
-    res.json({ values });
+    if (!summaryState && !markdown) {
+      triggerPatientSummarySync(token, patientFolderId, 'autofill');
+      res.status(202).json({
+        values: emptyAutofillValues(schemaFields),
+        summaryPending: true,
+        pendingReason: 'summary_building' as PdfAutofillPendingReason,
+        message: 'Patient summary is still building. Try autofill again in a minute.',
+      });
+      return;
+    }
+
+    if (!summaryState) {
+      triggerPatientSummarySync(token, patientFolderId, 'autofill');
+      res.status(202).json({
+        values: emptyAutofillValues(schemaFields),
+        summaryPending: true,
+        pendingReason: 'summary_building' as PdfAutofillPendingReason,
+        message: 'Summary state is building. Try autofill again shortly.',
+      });
+      return;
+    }
+
+    const ruleT0 = performance.now();
+    const ruleValues = prefillFromSummaryState(schemaFields, summaryState);
+    const rulePrefillMs = Math.round(performance.now() - ruleT0);
+
+    const llmFields = fieldsNeedingLlm(schemaFields, ruleValues);
+    let llmValues: Record<string, string | null> = {};
+    let geminiMs = 0;
+
+    if (llmFields.length > 0) {
+      const geminiT0 = performance.now();
+      llmValues = await withAutofillResponseTimeout(
+        extractDataFromPatientSummary(llmFields, summaryState)
+      );
+      geminiMs = Math.round(performance.now() - geminiT0);
+    }
+
+    const values = { ...emptyAutofillValues(schemaFields), ...ruleValues, ...llmValues };
+
+    console.info(
+      '[pdf-filler/autofill]',
+      JSON.stringify({
+        load_schema_ms: loadSchemaMs,
+        read_summary_ms: readSummaryMs,
+        rule_prefill_ms: rulePrefillMs,
+        gemini_ms: geminiMs,
+        field_count: schemaFields.length,
+        llm_field_count: llmFields.length,
+      })
+    );
+
+    const payload: Record<string, unknown> = { values };
+    if (!config.isProduction) {
+      payload.timingsMs = {
+        load_schema_ms: loadSchemaMs,
+        read_summary_ms: readSummaryMs,
+        rule_prefill_ms: rulePrefillMs,
+        gemini_ms: geminiMs,
+        field_count: schemaFields.length,
+        llm_field_count: llmFields.length,
+      };
+    }
+
+    res.json(payload);
   } catch (err) {
-    console.error('[pdf-filler] autofill:', err);
     const message = err instanceof Error ? err.message : 'Autofill failed.';
+    if (message === AUTOFILL_TIMEOUT_MESSAGE) {
+      res.status(202).json({
+        values: emptyAutofillValues(schemaFields),
+        summaryPending: true,
+        pendingReason: 'autofill_slow' as PdfAutofillPendingReason,
+        message:
+          'Autofill is taking longer than expected. Wait a moment, then try once more.',
+      });
+      return;
+    }
+    console.error('[pdf-filler] autofill:', err);
     res.status(500).json({ error: 'Failed to autofill from patient summary.', detail: message });
   }
 });
 
-router.post('/patients/:patientId/fill', async (req: Request, res: Response) => {
+router.post('/patients/:patientId/fill', requireAnyPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const patientFolderId = String(req.params.patientId);
-    const templateId = sanitizeString(req.body.templateId, 64);
-    const answers = req.body.answers as Record<string, unknown> | undefined;
-    const newlyAddedData = req.body.newlyAddedData as Record<string, unknown> | undefined;
-
-    if (!templateId) {
-      res.status(400).json({ error: 'templateId is required.' });
-      return;
-    }
-    if (!answers || typeof answers !== 'object') {
-      res.status(400).json({ error: 'answers object is required.' });
-      return;
-    }
-
-    let entry;
-    let pdfBuffer: Buffer;
-    let schema: Record<string, unknown>;
-    try {
-      ({ entry, pdfBuffer, schema } = await loadTemplatePdfAndSchema(token, templateId));
-    } catch (e) {
-      if (e instanceof TemplateNotFoundError) {
-        res.status(404).json({ error: 'Template not found.' });
-        return;
-      }
-      throw e;
-    }
-
-    const schemaFields = schemaPropertiesToFields(schema);
-    const hasNewData =
-      newlyAddedData &&
-      typeof newlyAddedData === 'object' &&
-      Object.keys(newlyAddedData).length > 0;
-
-    let summaryFieldsUpdated = 0;
-    if (hasNewData) {
-      const enrichResult = await enrichPatientSummaryFromFormSubmission(token, patientFolderId, {
-        templateId,
-        templateDisplayName: entry.displayName,
-        newlyAddedData,
-        schemaFields,
-      });
-      summaryFieldsUpdated = enrichResult.fieldsWritten;
-    }
-
-    const filledPdf = await fillPdfViaSidecar(pdfBuffer, schema, answers);
-
-    const subfolderName = PDF_DOCUMENT_TYPE_TO_PATIENT_SUBFOLDER[entry.documentType];
-    const targetFolderId = await getOrCreatePatientSubfolder(token, patientFolderId, subfolderName);
-    const outName = `${entry.displayName} — filled ${new Date().toISOString().slice(0, 10)}.pdf`;
-    const fileId = await uploadToDrive(
+    const input = validatePdfFillSaveInput(patientFolderId, req.body as Record<string, unknown>);
+    const result = await performPatientPdfFillSave({
       token,
-      outName,
-      'application/pdf',
-      targetFolderId,
-      filledPdf,
-      { halo_pdf_filled: '1', template_id: templateId }
-    );
-
-    res.json({
-      fileId,
-      name: outName,
-      subfolder: subfolderName,
-      templateId,
-      summaryFieldsUpdated,
+      input,
+      actor: getPdfFillActor(req),
+      waitForSummary: false,
     });
+    res.json(config.isProduction ? { ...result, timingsMs: undefined } : result);
   } catch (err) {
     console.error('[pdf-filler] fill:', err);
     const message = err instanceof Error ? err.message : 'Fill failed.';
-    res.status(500).json({ error: 'Failed to generate filled PDF.', detail: message });
+    const status = err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
+      ? err.status
+      : 500;
+    res.status(status).json({ error: 'Failed to generate filled PDF.', detail: message });
   }
 });
 
-router.get('/shared-forms/catalog', async (req: Request, res: Response) => {
+router.post('/patients/:patientId/fill/jobs', requireAnyPersona, async (req: Request, res: Response) => {
+  try {
+    const token = req.session.accessToken!;
+    const patientFolderId = String(req.params.patientId);
+    const input = validatePdfFillSaveInput(patientFolderId, req.body as Record<string, unknown>);
+    const job = createJob<PdfFillSaveInput>('pdf-filler.fill', input, getPdfFillActor(req));
+
+    startPatientPdfFillJob(job, token);
+
+    res.status(202).json({
+      jobId: job.id,
+      job: serializePdfFillJob(job as StoredJob<unknown, PdfFillSaveResult>),
+    });
+  } catch (err) {
+    console.error('[pdf-filler] fill job:', err);
+    const message = err instanceof Error ? err.message : 'Could not start PDF save job.';
+    const status = err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
+      ? err.status
+      : 500;
+    res.status(status).json({ error: message });
+  }
+});
+
+router.get('/jobs/:jobId', requireAnyPersona, (req: Request, res: Response): void => {
+  const job = getJob<unknown, PdfFillSaveResult>(String(req.params.jobId));
+  if (!job || job.type !== 'pdf-filler.fill') {
+    res.status(404).json({ error: 'Job not found.' });
+    return;
+  }
+  if (!canViewPdfFillJob(req, job)) {
+    res.status(403).json({ error: 'You do not have access to this job.' });
+    return;
+  }
+  res.json({ job: serializePdfFillJob(job) });
+});
+
+router.get('/shared-forms/catalog', requireAdminStaffPersona, async (req: Request, res: Response) => {
   try {
     const documentTypeRaw = sanitizeString(String(req.query.documentType || ''), 64);
     const insuranceCompanyId = sanitizeString(String(req.query.insuranceCompanyId || ''), 64);
@@ -533,7 +1033,7 @@ router.get('/shared-forms/catalog', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/shared-forms/:pdfHash/import', async (req: Request, res: Response) => {
+router.post('/shared-forms/:pdfHash/import', requireAdminStaffPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const pdfHash = sanitizeString(req.params.pdfHash, 64).toLowerCase();
@@ -565,6 +1065,7 @@ router.post('/shared-forms/:pdfHash/import', async (req: Request, res: Response)
     });
 
     void incrementSharedFormImportCount(pdfHash);
+    invalidateTemplateCaches(template.templateId);
     res.json({ template, pdfPending: true });
   } catch (err) {
     console.error('[pdf-filler] shared import:', err);
@@ -572,7 +1073,7 @@ router.post('/shared-forms/:pdfHash/import', async (req: Request, res: Response)
   }
 });
 
-router.post('/shared-forms/import-pack', async (req: Request, res: Response) => {
+router.post('/shared-forms/import-pack', requireAdminStaffPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const documentTypeRaw = sanitizeString(req.body.documentType, 64);
@@ -611,7 +1112,7 @@ router.post('/shared-forms/import-pack', async (req: Request, res: Response) => 
   }
 });
 
-router.post('/shared-forms/:pdfHash/attach', async (req: Request, res: Response) => {
+router.post('/shared-forms/:pdfHash/attach', requireAdminStaffPersona, async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
     const pdfHash = sanitizeString(req.params.pdfHash, 64).toLowerCase();
@@ -653,6 +1154,7 @@ router.post('/shared-forms/:pdfHash/attach', async (req: Request, res: Response)
       insuranceCompanyId: entry.insuranceCompanyId,
     });
 
+    invalidateTemplateCaches(template.templateId);
     res.json({ template });
   } catch (err) {
     console.error('[pdf-filler] shared attach:', err);
