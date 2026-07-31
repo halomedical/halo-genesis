@@ -3,7 +3,7 @@ import type { Patient } from '../../../../shared/types';
 import {
   Plus, LogOut, Search, Trash2, ChevronDown,
   Settings, Loader2, Calendar as CalendarIcon, Users, Clock, ChevronsLeft, ChevronsRight, LayoutPanelTop, Bot, Sparkles,
-  CreditCard,
+  CreditCard, Images,
 } from 'lucide-react';
 import { searchPatientsByConcept } from '../services/api';
 
@@ -19,7 +19,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onToast?: (message: string, type: 'success' | 'error' | 'info') => void;
   userEmail?: string;
-  activeMainView?: 'workspace' | 'calendar' | 'admissions' | 'marketplace' | 'billing';
+  activeMainView?: 'workspace' | 'calendar' | 'admissions' | 'marketplace' | 'billing' | 'beamer';
   onOpenPatients?: () => void;
   onOpenCalendar?: () => void;
   admissionsEnabled?: boolean;
@@ -30,6 +30,8 @@ interface SidebarProps {
   onOpenMarketplace?: () => void;
   billingEnabled?: boolean;
   onOpenBilling?: () => void;
+  beamerEnabled?: boolean;
+  onOpenBeamer?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }
@@ -57,6 +59,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenMarketplace,
   billingEnabled = false,
   onOpenBilling,
+  beamerEnabled = false,
+  onOpenBeamer,
   collapsed = false,
   onToggleCollapse,
 }) => {
@@ -75,6 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const admissionsActive = activeMainView === 'admissions';
   const marketplaceActive = activeMainView === 'marketplace';
   const billingActive = activeMainView === 'billing';
+  const beamerActive = activeMainView === 'beamer';
 
   // Local filter
   const localFiltered = patients.filter(
@@ -557,6 +562,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span className="flex-1 text-left">Admissions</span>
                   <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                     Board
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {beamerEnabled && (
+          <div className="mb-1">
+            <button
+              type="button"
+              onClick={() => onOpenBeamer?.()}
+              title="Beamer"
+              className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+                beamerActive
+                  ? 'bg-cyan-50 text-cyan-700'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+              } ${collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-2.5'}`}
+            >
+              <Images size={17} className={beamerActive ? 'text-cyan-600' : 'text-slate-400'} />
+              {!collapsed && (
+                <>
+                  <span className="flex-1 text-left">Beamer</span>
+                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    Images
                   </span>
                 </>
               )}

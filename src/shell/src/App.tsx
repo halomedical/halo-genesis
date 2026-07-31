@@ -22,6 +22,7 @@ import { CalendarPage } from './pages/CalendarPage';
 import { AdmissionsPage } from './pages/AdmissionsPage';
 import { MarketplacePage } from './pages/MarketplacePage';
 import { OnboardingModal } from './components/OnboardingModal';
+import { BeamerPage } from './features/beamer';
 
 export const App = () => {
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -80,7 +81,7 @@ export const App = () => {
 
   // Calendar / bookings
   const [calendarPrepEvent, setCalendarPrepEvent] = useState<CalendarEvent | null>(null);
-  const [activeMainView, setActiveMainView] = useState<'workspace' | 'calendar' | 'admissions' | 'marketplace' | 'billing'>('workspace');
+  const [activeMainView, setActiveMainView] = useState<'workspace' | 'calendar' | 'admissions' | 'marketplace' | 'billing' | 'beamer'>('workspace');
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('halo_sidebarCollapsed') === '1';
@@ -121,6 +122,14 @@ export const App = () => {
       setActiveMainView('workspace');
     }
   }, [activeMainView, effectiveFeatures?.billing]);
+
+  const beamerEnabled = effectiveFeatures?.beamer ?? false;
+
+  useEffect(() => {
+    if (!beamerEnabled && activeMainView === 'beamer') {
+      setActiveMainView('workspace');
+    }
+  }, [activeMainView, beamerEnabled]);
 
   const adminAgentEnabled = effectiveFeatures?.adminAgent ?? false;
 
@@ -483,7 +492,7 @@ export const App = () => {
   const admissionsEnabled = effectiveFeatures?.admissions ?? false;
   const billingEnabled = effectiveFeatures?.billing ?? false;
   const scribeEnabled = effectiveFeatures?.scribe ?? false;
-  const hideSidebarOnMobile = activeMainView === 'workspace' && Boolean(selectedPatientId);
+  const hideSidebarOnMobile = (activeMainView === 'workspace' && Boolean(selectedPatientId)) || activeMainView === 'beamer';
 
   return (
     <div className="flex h-screen bg-slate-100 font-sans text-slate-900 overflow-hidden relative">
@@ -514,6 +523,8 @@ export const App = () => {
           onOpenMarketplace={() => setActiveMainView('marketplace')}
           billingEnabled={billingEnabled}
           onOpenBilling={() => billingEnabled && setActiveMainView('billing')}
+          beamerEnabled={beamerEnabled}
+          onOpenBeamer={() => beamerEnabled && setActiveMainView('beamer')}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         />
@@ -551,6 +562,13 @@ export const App = () => {
             patients={patients}
             onToast={showToast}
             onOpenPatient={(patientId, options) => openPatientWorkspace(patientId, options)}
+          />
+        ) : activeMainView === 'beamer' && beamerEnabled ? (
+          <BeamerPage
+            patients={patients}
+            practiceName={practiceInfo?.name}
+            onBack={() => setActiveMainView('workspace')}
+            onToast={showToast}
           />
         ) : activeMainView === 'billing' && billingEnabled ? (
           <BillingPage

@@ -2,9 +2,9 @@ name: halo-genesis-ci
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, staging]
   push:
-    branches: [main]
+    branches: [main, staging]
 
 jobs:
   build-and-test:
@@ -36,3 +36,58 @@ jobs:
           GOOGLE_CLIENT_ID: ci-google-client-id
           GOOGLE_CLIENT_SECRET: ci-google-client-secret
           GEMINI_API_KEY: ci-gemini-api-key
+
+      - name: Beamer payload security test
+        run: npm run test:beamer
+
+  heimdall-checks:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: services/heimdall
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: services/heimdall/requirements.txt
+
+      - name: Install Heimdall dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Compile Heimdall
+        run: python -m compileall -q halo_sentry
+
+      - name: Import Heimdall modules
+        run: python -c "import halo_sentry.config, halo_sentry.pipeline, halo_sentry.watcher"
+
+      - name: Run synthetic Heimdall unit tests
+        run: python -m unittest discover -v
+
+      - name: Validate installer PowerShell syntax
+        shell: pwsh
+        run: |
+          $parseFailures = @()
+          Get-ChildItem -Path installer -Filter *.ps1 -File -Recurse | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$parseErrors
+            )
+            if ($parseErrors.Count -gt 0) {
+              $parseFailures += $parseErrors | ForEach-Object {
+                "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)"
+              }
+            }
+          }
+          if ($parseFailures.Count -gt 0) {
+            $parseFailures | Write-Error
+            exit 1
+          }

@@ -6,6 +6,7 @@ export interface PracticeFeaturesRow {
   admin_agent: boolean;
   scribe: boolean;
   billing: boolean;
+  beamer: boolean;
 }
 
 export function practiceFeatureRowToSettings(
@@ -16,5 +17,6 @@ export function practiceFeatureRowToSettings(
     adminAgent: Boolean(row?.admin_agent),
     scribe: Boolean(row?.scribe),
     billing: Boolean(row?.billing),
+    beamer: Boolean(row?.beamer),
   };
 }

@@ -6,6 +6,30 @@ This guide walks you through putting the HALO web app on a public URL (e.g. `htt
 
 ## Overview
 
+### Beamer deployment boundary
+
+Beamer is the user-facing feature; Heimdall is its internal Windows agent. A
+normal Genesis web deployment does not produce or install the Windows agent.
+Before enabling Beamer in any production practice:
+
+- apply and verify the server-only Beamer Supabase migration;
+- configure the server-side `BEAMER_WORKSPACE_*` values from `.env.example`
+  using a dedicated least-privilege Halo Workspace identity;
+- confirm the server creates `Beamer - <Practice Name>` and enforces one active
+  Windows workstation per practice;
+- publish a signed, immutable Heimdall Windows package and verified manifest;
+- confirm enrollment returns only a revocable device token and non-secret
+  configuration--never a Google key or Drive routing ID;
+- validate mobile patient-first upload, Review approval, practice isolation,
+  device revocation, and Scopes access to approved assets in a non-production
+  Workspace; and
+- keep the `beamer` practice entitlement disabled until those checks pass.
+
+The web server owns Google Drive provisioning and upload. Do not put Workspace
+credentials in `VITE_*` variables, browser storage, installer arguments,
+workstation files, Supabase client-visible rows, or logs. See
+`FUJI_INTEGRATION_PLAN.md` for the complete rollout gates.
+
 - **Stack**: Node.js server serves both the API and the built React frontend in production.
 - **Single URL**: Use one base URL (e.g. `https://app.halo.africa`) for both the site and the API — no need for a separate API subdomain unless you want one.
 - **HTTPS**: Required for Google OAuth and secure cookies. Use a reverse proxy (e.g. Caddy or nginx) with a TLS certificate.

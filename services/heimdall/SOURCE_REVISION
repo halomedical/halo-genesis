@@ -1,0 +1,5 @@
+source_repository=https://github.com/halomedical/fuji-project.git
+source_base_commit=ccda7a2bfde92f1f987693bcc86187f1708d5e45
+integration_revision=the halo-genesis commit containing this imported and hardened tree
+entry_point=python -m halo_sentry
+note=The halo-genesis integration commit is the authoritative immutable revision; the public source repository and base commit preserve upstream provenance.

@@ -12,8 +12,10 @@ import haloRoutes from './routes/halo';
 import calendarRoutes from './routes/calendar';
 import requestTemplateRoutes from './routes/requestTemplate';
 import adminAgentRoutes from './routes/adminAgent';
+import beamerRoutes from './routes/beamer';
 import { requireFeature } from './middleware/requireFeature';
 import { attachTranscribeWebSocket } from './ws/transcribe';
+import { isTrustedBrowserOrigin } from './security/trustedOrigins';
 // Conversion scheduler disabled — was running in background for txt→docx→pdf
 // import { startScheduler } from './jobs/scheduler';
 import { startAutomationRunner } from './jobs/automationRunner';
@@ -56,16 +58,9 @@ const authLimiter = rateLimit({
 // --- MIDDLEWARE ---
 app.use(globalLimiter);
 app.use(cors({
-  // In production, allow same-origin requests and also accept any *.herokuapp.com
-  // origin so the app works regardless of how CLIENT_URL is configured.
   origin: (origin, cb) => {
     if (!origin) return cb(null, true); // same-origin or non-browser
-    if (!config.isProduction) return cb(null, origin === config.clientUrl);
-    const allowed =
-      origin === config.clientUrl ||
-      /^https:\/\/[a-z0-9-]+\.herokuapp\.com$/.test(origin) ||
-      origin === config.productionUrl;
-    cb(null, allowed ? origin : false);
+    cb(null, isTrustedBrowserOrigin(origin) ? origin : false);
   },
   credentials: true,
 }));
@@ -90,6 +85,7 @@ app.use('/api/halo', aiLimiter, haloRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/request-template', requestTemplateRoutes);
 app.use('/api/admin-agent', requireFeature('adminAgent'), adminAgentRoutes);
+app.use('/api/beamer', beamerRoutes);
 
 // Health check — returns server + dependency configuration status
 app.get('/api/health', (_req: Request, res: Response) => {

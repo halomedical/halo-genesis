@@ -22,6 +22,7 @@ export interface PracticeEntitlementsResult {
   onboardingRequired: boolean;
   profile: OnboardingProfile | null;
   source: 'database' | 'default';
+  accessRole: 'owner' | 'admin' | 'member';
 }
 
 let supabaseClient: SupabaseClient | null | undefined;
@@ -60,6 +61,7 @@ function defaultEntitlements(): PracticeEntitlementsResult {
     onboardingRequired: true,
     profile: null,
     source: 'default',
+    accessRole: 'member',
   };
 }
 
@@ -69,6 +71,7 @@ function orModules(a: UserModulesSettings, b: UserModulesSettings): UserModulesS
     adminAgent: Boolean(a.adminAgent || b.adminAgent),
     scribe: Boolean(a.scribe || b.scribe),
     billing: Boolean(a.billing || b.billing),
+    beamer: Boolean(a.beamer || b.beamer),
   };
 }
 
@@ -78,6 +81,7 @@ function andModules(a: UserModulesSettings, b: UserModulesSettings): UserModules
     adminAgent: Boolean(a.adminAgent && b.adminAgent),
     scribe: Boolean(a.scribe && b.scribe),
     billing: Boolean(a.billing && b.billing),
+    beamer: Boolean(a.beamer && b.beamer),
   };
 }
 
@@ -103,6 +107,8 @@ function normalizeOnboardingSelection(payload: unknown): UserModulesSettings {
     adminAgent: Boolean(input.adminAgent),
     scribe: Boolean(input.scribe),
     billing: Boolean(input.billing),
+    // Beamer is provisioned by Halo operations, not selected during onboarding.
+    beamer: false,
   };
 }
 
@@ -116,6 +122,7 @@ export interface SubmitOnboardingInput {
 interface MembershipRow {
   practice_id: string;
   role: string | null;
+  access_role: string | null;
   specialty_id: string | null;
   subspecialty_id: string | null;
   onboarding_completed_at: string | null;
@@ -174,7 +181,7 @@ async function ensurePracticeMembershipByEmail(
 
   const existing = await supabase
     .from('practice_users')
-    .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
+    .select('practice_id, role, access_role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
     .eq('email', normalizedEmail)
     .maybeSingle();
   if (existing.error) {
@@ -206,6 +213,9 @@ async function ensurePracticeMembershipByEmail(
       practice_id: practiceId,
       email: normalizedEmail,
       role: 'clinician',
+      // This branch has just created a brand-new practice for this sole user.
+      // access_role is server-managed and never changed by onboarding.
+      access_role: 'owner',
     }),
     supabase.from('practice_features').upsert(
       {
@@ -214,6 +224,7 @@ async function ensurePracticeMembershipByEmail(
         admin_agent: DEFAULT_USER_MODULES.adminAgent,
         scribe: DEFAULT_USER_MODULES.scribe,
         billing: DEFAULT_USER_MODULES.billing,
+        beamer: DEFAULT_USER_MODULES.beamer,
       },
       { onConflict: 'practice_id' }
     ),
@@ -229,7 +240,7 @@ async function ensurePracticeMembershipByEmail(
 
   const provisioned = await supabase
     .from('practice_users')
-    .select('practice_id, role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
+    .select('practice_id, role, access_role, specialty_id, subspecialty_id, onboarding_completed_at, practices ( id, name, slug )')
     .eq('email', normalizedEmail)
     .maybeSingle();
   if (provisioned.error || !provisioned.data?.practice_id) {
@@ -317,7 +328,7 @@ export async function getPracticeEntitlementsForEmail(
 
   const { data: featureRow, error: featuresError } = await supabase
     .from('practice_features')
-    .select('admissions, admin_agent, scribe, billing')
+    .select('admissions, admin_agent, scribe, billing, beamer')
     .eq('practice_id', membership.practice_id)
     .maybeSingle();
 
@@ -407,6 +418,9 @@ export async function getPracticeEntitlementsForEmail(
     onboardingRequired: !profile?.completedAt,
     profile,
     source: 'database',
+    accessRole: membership.access_role === 'owner' || membership.access_role === 'admin'
+      ? membership.access_role
+      : 'member',
   };
 }
 

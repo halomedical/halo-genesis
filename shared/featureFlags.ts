@@ -10,6 +10,7 @@ export interface EffectiveFeatureFlags {
   adminAgent: boolean;
   scribe: boolean;
   billing: boolean;
+  beamer: boolean;
 }
 
 function isRequiredConfigKeyEnabled(settings: UserSettings, key: string): boolean {
@@ -23,6 +24,8 @@ function isRequiredConfigKeyEnabled(settings: UserSettings, key: string): boolea
       return modules.billing ?? false;
     case 'features.admissions':
       return modules.admissions ?? false;
+    case 'features.beamer':
+      return modules.beamer ?? false;
     default:
       return false;
   }
@@ -45,11 +48,13 @@ export function resolveEffectiveFeatureFlags(
   const adminAgent = (modules.adminAgent ?? false) && isRegistryModuleEnabled(settings, byId.get('admin-agent-v1'));
   const scribe = (modules.scribe ?? true) && isRegistryModuleEnabled(settings, byId.get('scribe-agent-v1'));
   const billing = (modules.billing ?? false) && isRegistryModuleEnabled(settings, byId.get('billing-agent-v1'));
+  const beamer = (modules.beamer ?? false) && isRegistryModuleEnabled(settings, byId.get('heimdall-agent-v1'));
 
   return {
     admissions: modules.admissions ?? false,
     adminAgent,
     scribe,
     billing,
+    beamer,
   };
 }

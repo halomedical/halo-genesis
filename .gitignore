@@ -1,5 +1,39 @@
 node_modules/
 server/dist/
 .env
+.env.*
+!.env.example
 src/shell/node_modules/
 src/shell/dist/
+
+# Python caches and local environments
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+services/heimdall/.venv/
+services/heimdall/venv/
+
+# Heimdall local configuration, credentials, and runtime data
+services/heimdall/config.json
+services/heimdall/secrets/
+services/heimdall/logs/
+services/heimdall/state/
+services/heimdall/archive/
+services/heimdall/watch/
+services/heimdall/**/service-account*.json
+services/heimdall/**/service_account*.json
+services/heimdall/**/halo-sentry-credentials.json
+services/heimdall/**/token.json
+services/heimdall/**/client_secrets.json
+services/heimdall/**/_halo_processed/
+services/heimdall/**/_halo_review/
+
+# Heimdall packaging and temporary output
+services/heimdall/build/
+services/heimdall/dist/
+services/heimdall/.coverage
+services/heimdall/htmlcov/
+services/heimdall/*.zip
+services/heimdall/*.exe
+services/heimdall/*.tmp
+services/heimdall/*.temp

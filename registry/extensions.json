@@ -37,5 +37,18 @@
     "billing_model": "sliding_percentage",
     "version": "1.0.0",
     "built_by": "halo-genesis/modules"
+  },
+  {
+    "id": "heimdall-agent-v1",
+    "display_name": "Beamer",
+    "description": "Practice-scoped medical image ingestion from Beamer for Windows and mobile uploads",
+    "specialty_tags": ["all"],
+    "required_endpoints": ["beamer-api", "workspace-drive-provisioner"],
+    "required_config_keys": ["features.beamer"],
+    "ui_surface": "beamer-tab",
+    "minimum_tier": "practice",
+    "billing_model": "per_practice",
+    "version": "0.1.0",
+    "built_by": "halo-genesis/services/heimdall"
   }
 ]

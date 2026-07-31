@@ -13,7 +13,12 @@
     "build:server": "tsc",
     "build:shell": "npm run install:shell && npm run build --prefix src/shell",
     "start": "node server/dist/server/index.js",
-    "test:calendar": "ts-node server/tests/calendar-normalise.test.ts"
+    "test:calendar": "ts-node server/tests/calendar-normalise.test.ts",
+    "test:beamer": "ts-node server/tests/beamer-security.test.ts",
+    "check:heimdall:compile": "python -m compileall -q services/heimdall/halo_sentry",
+    "check:heimdall:imports": "python -c \"import sys; sys.path.insert(0, 'services/heimdall'); import halo_sentry.config, halo_sentry.pipeline, halo_sentry.watcher\"",
+    "test:heimdall": "python -m unittest discover -s services/heimdall/tests -t services/heimdall -v",
+    "check:heimdall": "npm run check:heimdall:compile && npm run check:heimdall:imports && npm run test:heimdall"
   },
   "engines": {
     "node": "20.x"

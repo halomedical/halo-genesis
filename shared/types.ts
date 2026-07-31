@@ -106,6 +106,7 @@ export interface UserModulesSettings {
   adminAgent: boolean;
   scribe: boolean;
   billing: boolean;
+  beamer: boolean;
 }
 
 export const DEFAULT_USER_MODULES: UserModulesSettings = {
@@ -113,7 +114,24 @@ export const DEFAULT_USER_MODULES: UserModulesSettings = {
   adminAgent: false,
   scribe: true,
   billing: false,
+  beamer: false,
 };
+
+export type BeamerUploadSource = 'windows' | 'mobile';
+export type BeamerReviewStatus = 'pending_review' | 'approved' | 'rejected';
+export type BeamerProcessingStatus = 'uploading' | 'processing' | 'ready' | 'failed';
+
+export interface BeamerAsset {
+  id: string;
+  patientId: string | null;
+  source: BeamerUploadSource;
+  capturedAt: string;
+  mimeType: string;
+  byteSize: number;
+  reviewStatus: BeamerReviewStatus;
+  processingStatus: BeamerProcessingStatus;
+  previewUrl?: string | null;
+}
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   firstName: '',

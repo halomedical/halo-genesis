@@ -51,6 +51,31 @@ export const config = {
   supabaseUrl: process.env.SUPABASE_URL || '',
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
 
+  // Beamer Workspace provisioning (server-only, optional).
+  // Provisioning stays disabled unless every value is explicitly configured.
+  beamerWorkspaceClientEmail: process.env.BEAMER_WORKSPACE_CLIENT_EMAIL || '',
+  beamerWorkspacePrivateKey: (process.env.BEAMER_WORKSPACE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+  beamerWorkspaceDelegatedSubject: process.env.BEAMER_WORKSPACE_DELEGATED_SUBJECT || '',
+  beamerEnrollmentTtlMinutes: Math.min(
+    Math.max(Number(process.env.BEAMER_ENROLLMENT_TTL_MINUTES) || 15, 5),
+    60
+  ),
+  beamerOnlineThresholdSeconds: Math.min(
+    Math.max(Number(process.env.BEAMER_ONLINE_THRESHOLD_SECONDS) || 120, 30),
+    900
+  ),
+  beamerMaxMobileUploadBytes: Math.min(
+    Math.max(Number(process.env.BEAMER_MAX_MOBILE_UPLOAD_BYTES) || 15 * 1024 * 1024, 1024),
+    25 * 1024 * 1024
+  ),
+  beamerMaxFileUploadBytes: Math.min(
+    Math.max(Number(process.env.BEAMER_MAX_FILE_UPLOAD_BYTES) || 10 * 1024 * 1024, 1024),
+    20 * 1024 * 1024
+  ),
+  beamerWindowsInstallerVersion: process.env.BEAMER_WINDOWS_INSTALLER_VERSION || '',
+  beamerWindowsInstallerUrl: process.env.BEAMER_WINDOWS_INSTALLER_URL || '',
+  beamerWindowsInstallerSha256: (process.env.BEAMER_WINDOWS_INSTALLER_SHA256 || '').toUpperCase(),
+
   // Halo Functions API
   haloApiBaseUrl: process.env.HALO_API_BASE_URL || 'https://halo-functions-75316778879.africa-south1.run.app',
   haloUserId: process.env.HALO_USER_ID || 'cae6877e-0fbe-4ea1-acce-39957e7575bc',

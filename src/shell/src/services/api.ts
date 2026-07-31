@@ -169,12 +169,14 @@ export const fetchEffectiveFeatures = () =>
       adminAgent: boolean;
       scribe: boolean;
       billing: boolean;
+      beamer: boolean;
     };
     autoModules: {
       admissions: boolean;
       adminAgent: boolean;
       scribe: boolean;
       billing: boolean;
+      beamer: boolean;
     };
     source: 'database' | 'default';
   }>('/api/drive/features');
@@ -1008,6 +1010,116 @@ export const appendPatientBillingEligibility = (patientId: string, record: unkno
       body: JSON.stringify(record),
     }
   );
+
+// --- Beamer ---
+
+export type BeamerUploadSource = 'windows' | 'mobile';
+export type BeamerUploadStatus = 'uploading' | 'processing' | 'approved' | 'review' | 'rejected' | 'failed';
+
+export interface BeamerDeviceSummary {
+  id: string;
+  displayName: string;
+  status: 'online' | 'offline' | 'attention';
+  platform: 'windows';
+  agentVersion?: string | null;
+  lastSeenAt?: string | null;
+  lastSyncAt?: string | null;
+  warnings: string[];
+}
+
+export interface BeamerUploadSummary {
+  id: string;
+  patientId?: string | null;
+  patientName?: string | null;
+  capturedAt: string;
+  source: BeamerUploadSource;
+  itemCount: number;
+  status: BeamerUploadStatus;
+  thumbnailUrl?: string | null;
+  reason?: string | null;
+}
+
+export interface BeamerOverview {
+  enabled: boolean;
+  practiceName?: string | null;
+  onboardingState: 'not_started' | 'provisioning' | 'ready' | 'attention';
+  device: BeamerDeviceSummary | null;
+  recentUploads: BeamerUploadSummary[];
+  reviewQueue: BeamerUploadSummary[];
+}
+
+export interface BeamerEnrollment {
+  status: 'provisioning' | 'ready';
+  enrollmentId: string;
+  enrollmentToken: string;
+  downloadUrl?: string | null;
+  bootstrapUrl: string;
+  expiresAt?: string | null;
+}
+
+export interface BeamerAsset {
+  id: string;
+  patientId: string;
+  capturedAt: string;
+  source: BeamerUploadSource;
+  status: 'approved';
+  thumbnailUrl?: string | null;
+  previewUrl?: string | null;
+  mimeType: string;
+}
+
+export interface BeamerMobileSelection {
+  clientId: string;
+  file: File;
+}
+
+export const fetchBeamerOverview = () =>
+  request<BeamerOverview>('/api/beamer/overview');
+
+export const startBeamerOnboarding = (replaceDevice = false) =>
+  request<BeamerEnrollment>('/api/beamer/onboarding/start', {
+    method: 'POST',
+    body: JSON.stringify({ replaceDevice }),
+  });
+
+export const uploadBeamerMobileFiles = async (patientId: string, files: BeamerMobileSelection[]) => {
+  const payload = await Promise.all(files.map(async ({ clientId, file }) => ({
+    clientId,
+    mimeType: getBeamerFileMimeType(file),
+    size: file.size,
+    data: await fileToBase64(file),
+  })));
+
+  return request<{ uploads: BeamerUploadSummary[] }>('/api/beamer/mobile/uploads', {
+    method: 'POST',
+    body: JSON.stringify({ patientId, files: payload }),
+  });
+};
+
+export const reviewBeamerUpload = (uploadId: string, action: 'approve' | 'reject', patientId?: string) =>
+  request<{ upload: BeamerUploadSummary }>(`/api/beamer/review/${encodeURIComponent(uploadId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action, patientId }),
+  });
+
+export const fetchApprovedBeamerAssets = (patientId: string) =>
+  request<{ assets: BeamerAsset[] }>(
+    `/api/beamer/patients/${encodeURIComponent(patientId)}/assets?status=approved`
+  );
+
+export const fetchBeamerAssetContent = (assetId: string) =>
+  requestBlob(`/api/beamer/assets/${encodeURIComponent(assetId)}/content`);
+
+export function getBeamerFileMimeType(file: File): string {
+  if (file.type) return file.type.toLowerCase();
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'png') return 'image/png';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'heic') return 'image/heic';
+  if (extension === 'heif') return 'image/heif';
+  return 'application/octet-stream';
+}
 
 // --- Chat stream ---
 

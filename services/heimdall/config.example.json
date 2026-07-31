@@ -1,0 +1,37 @@
+{
+  "config_schema_version": 3,
+  "contract_version": 1,
+  "watch_directory": "C:\\Beamer\\Inbox",
+  "watch_volume_serial": "A1B2C3D4",
+  "api_base_url": "https://app.halo.africa",
+  "device_id": "00000000-0000-4000-8000-000000000001",
+  "installation_id": "00000000-0000-4000-8000-000000000002",
+  "device_credential_path": "C:\\ProgramData\\Halo Medical\\Heimdall\\secrets\\device-credential.txt",
+  "heartbeat_interval_seconds": 60,
+  "max_upload_bytes": 20971520,
+  "agent_endpoints": {
+    "heartbeat": "/api/beamer/agent/heartbeat",
+    "uploads": "/api/beamer/agent/files"
+  },
+  "settle_seconds": 3,
+  "max_lock_retries": 5,
+  "lock_retry_delay_seconds": 2,
+  "ignored_extensions": [".tmp", ".temp", ".crdownload", ".part"],
+  "ignored_prefixes": ["~", ".", "$"],
+  "log_file": "C:\\ProgramData\\Halo Medical\\Heimdall\\logs\\heimdall.log",
+  "state_directory": "C:\\ProgramData\\Halo Medical\\Heimdall\\state",
+  "processed_subdirectory": "_halo_processed",
+  "review_subdirectory": "_halo_review",
+  "delete_after_upload": false,
+  "max_workers": 2,
+  "queue_capacity": 256,
+  "startup_backlog_enabled": true,
+  "retry_initial_delay_seconds": 15,
+  "retry_max_delay_seconds": 900,
+  "retry_dispatch_interval_seconds": 5,
+  "special_workflows": {
+    "enabled": false,
+    "expected_image_identifiers": ["Janet Johnson"],
+    "ocr_tesseract_cmd": "C:\\ProgramData\\Halo Medical\\Heimdall\\bin\\tesseract\\tesseract.exe"
+  }
+}

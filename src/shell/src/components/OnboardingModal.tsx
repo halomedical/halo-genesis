@@ -20,6 +20,7 @@ const EMPTY_MODULES: UserModulesSettings = {
   adminAgent: false,
   scribe: false,
   billing: false,
+  beamer: false,
 };
 
 export const OnboardingModal: React.FC<Props> = ({ isOpen, state, submitting, onSubmit }) => {
