@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { PatientWorkspace, type WorkspaceNavigationIntent } from './pages/PatientWorkspace';
 import { Toast } from './components/Toast';
@@ -9,6 +9,8 @@ import { AdminAgentPanel } from './modules/admin-agent/components/AdminAgentPane
 import { AdminAgentOnboarding } from './modules/admin-agent/components/AdminAgentOnboarding';
 import { BillingPage } from './modules/billing/BillingPage';
 import type { Patient, UserSettings, CalendarEvent } from '../../../shared/types';
+import { resolvePatientNaming } from '../../../shared/patientNaming';
+import { formatPatientDisplayName } from '../../../shared/patientNamingEngine';
 import type { EffectiveFeatureFlags } from '../../../shared/featureFlags';
 import type { StickerExtractedData } from './services/api';
 import type { UploadHudState } from './components/UploadHud';
@@ -114,6 +116,15 @@ export const App = () => {
   }, [activeMainView, effectiveFeatures?.billing, userSettings?.modules?.billing]);
 
   const adminAgentEnabled = effectiveFeatures?.adminAgent ?? (userSettings?.modules?.adminAgent ?? false);
+
+  const patientNaming = useMemo(
+    () =>
+      resolvePatientNaming({
+        patientNamingId: userSettings?.patientNamingId,
+        patientNamingConfig: userSettings?.patientNamingConfig,
+      }),
+    [userSettings?.patientNamingId, userSettings?.patientNamingConfig]
+  );
 
   useEffect(() => {
     if (!adminAgentEnabled) {
@@ -436,6 +447,7 @@ export const App = () => {
           patients={patients}
           selectedPatientId={selectedPatientId}
           recentPatientIds={recentPatientIds}
+          patientNaming={patientNaming}
           onSelectPatient={(id) => {
             setActiveMainView('workspace');
             selectPatient(id);
@@ -493,6 +505,7 @@ export const App = () => {
         ) : activeMainView === 'admissions' && admissionsEnabled ? (
           <AdmissionsPage
             patients={patients}
+            patientNaming={patientNaming}
             onToast={showToast}
             onOpenPatient={(patientId, options) => openPatientWorkspace(patientId, options)}
           />
@@ -502,12 +515,14 @@ export const App = () => {
             patients={patients}
             selectedPatientId={selectedPatientId}
             userSettings={userSettings}
+            patientNaming={patientNaming}
           />
         ) : activePatient ? (
           <PatientWorkspace
             key={activePatient.id}
             patient={activePatient}
             allPatients={patients}
+            patientNaming={patientNaming}
             onBack={() => selectPatient(null)}
             onOpenPatient={(patientId) => openPatientWorkspace(patientId)}
             onDataChange={refreshPatients}
@@ -890,7 +905,10 @@ export const App = () => {
               </div>
               <h2 className="text-xl font-bold text-slate-800">Delete Patient Folder?</h2>
               <p className="text-slate-500 mt-2 px-4">
-                Are you sure you want to delete <span className="font-bold text-slate-800">{patientToDelete.name}</span>?
+                Are you sure you want to delete{' '}
+                <span className="font-bold text-slate-800">
+                  {formatPatientDisplayName(patientToDelete, patientNaming)}
+                </span>?
                 This will move the folder to your Google Drive Trash.
               </p>
             </div>

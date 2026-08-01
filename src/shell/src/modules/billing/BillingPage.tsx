@@ -16,6 +16,11 @@ import {
   MEDIKREDIT_LINE_ITEM_OPTIONS,
 } from './services/claimOptions';
 import type { Patient, UserSettings } from '../../../../../shared/types';
+import { DEFAULT_PATIENT_NAMING, type PatientNamingConfig } from '../../../../../shared/patientNaming';
+import {
+  formatPatientDisplayName,
+  formatPatientSubtitle,
+} from '../../../../../shared/patientNamingEngine';
 import {
   appendPatientBillingClaim,
   appendPatientBillingEligibility,
@@ -98,11 +103,13 @@ export function BillingPage({
   patients,
   selectedPatientId,
   userSettings,
+  patientNaming = DEFAULT_PATIENT_NAMING,
 }: {
   onToast: ToastFn;
   patients: Patient[];
   selectedPatientId: string | null;
   userSettings: UserSettings | null;
+  patientNaming?: PatientNamingConfig;
 }) {
   const [billingPatientId, setBillingPatientId] = useState<string>('');
 
@@ -130,7 +137,10 @@ export function BillingPage({
                   <option value="">Select patient…</option>
                   {patients.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} ({p.dob})
+                      {formatPatientDisplayName(p, patientNaming)}
+                      {formatPatientSubtitle(p, patientNaming)
+                        ? ` (${formatPatientSubtitle(p, patientNaming)})`
+                        : ''}
                     </option>
                   ))}
                 </select>
@@ -139,7 +149,12 @@ export function BillingPage({
           </div>
         </header>
 
-        <ClaimsTab onToast={onToast} patient={effectivePatient} userSettings={userSettings} />
+        <ClaimsTab
+          onToast={onToast}
+          patient={effectivePatient}
+          userSettings={userSettings}
+          patientNaming={patientNaming}
+        />
       </div>
     </div>
   );
@@ -357,10 +372,12 @@ function ClaimsTab({
   onToast,
   patient,
   userSettings,
+  patientNaming = DEFAULT_PATIENT_NAMING,
 }: {
   onToast: ToastFn;
   patient?: Patient;
   userSettings: UserSettings | null;
+  patientNaming?: PatientNamingConfig;
 }) {
   const [subTab, setSubTab] = useState<ClaimsSubTab>('list');
   const [claims, setClaims] = useState<StoredClaimRecord[] | null>(null);
@@ -905,7 +922,9 @@ function ClaimsTab({
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Patient claim history</p>
-                <p className="text-sm font-semibold text-slate-800">{patient.name}</p>
+                <p className="text-sm font-semibold text-slate-800">
+                  {formatPatientDisplayName(patient, patientNaming)}
+                </p>
               </div>
               {patientClaimsLoading ? (
                 <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">

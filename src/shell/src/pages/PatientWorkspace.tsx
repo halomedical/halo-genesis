@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Patient, DriveFile, BreadcrumbItem, ChatAttachment, ChatMessage, HaloNote, NoteField, CalendarEvent, ScribeSession } from '../../../../shared/types';
 import { AppStatus, FOLDER_MIME_TYPE } from '../../../../shared/types';
+import { DEFAULT_PATIENT_NAMING, type PatientNamingConfig } from '../../../../shared/patientNaming';
+import { formatPatientDisplayName } from '../../../../shared/patientNamingEngine';
 
 import {
   fetchFiles,
@@ -204,6 +206,7 @@ function extractSurname(fullName: string): string {
 interface Props {
   patient: Patient;
   allPatients: Patient[];
+  patientNaming?: PatientNamingConfig;
   onBack: () => void;
   onOpenPatient?: (patientId: string) => void;
   onDataChange: () => void;
@@ -219,6 +222,7 @@ interface Props {
 export const PatientWorkspace: React.FC<Props> = ({
   patient,
   allPatients,
+  patientNaming = DEFAULT_PATIENT_NAMING,
   onBack,
   onOpenPatient,
   onDataChange,
@@ -1463,7 +1467,7 @@ export const PatientWorkspace: React.FC<Props> = ({
           </button>
           <div className="group relative">
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl md:text-3xl font-bold text-slate-800 tracking-tight leading-tight">{patient.name}</h1>
+              <h1 className="text-2xl md:text-3xl font-bold text-slate-800 tracking-tight leading-tight">{formatPatientDisplayName(patient, patientNaming)}</h1>
               <button onClick={startEditPatient} className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-slate-400 hover:text-sky-600 hover:bg-slate-100 rounded-full">
                 <Pencil size={16} />
               </button>

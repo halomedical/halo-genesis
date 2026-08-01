@@ -1,5 +1,14 @@
 // Shared types used by both client and server
 
+import {
+  DEFAULT_PATIENT_NAMING,
+  normalizePatientNamingConfig,
+  resolvePatientNaming,
+  type PatientNamingConfig,
+} from './patientNaming';
+
+export type { PatientNamingConfig } from './patientNaming';
+
 export interface Patient {
   id: string;
   name: string;
@@ -85,6 +94,10 @@ export interface UserSettings {
   templateId?: string;
   modules?: UserModulesSettings;
   billing?: UserBillingSettings;
+  /** Preset id for patient naming (halo_default, last_first_dob, folder_number_prefix, custom) */
+  patientNamingId?: string;
+  /** Full naming config (preset snapshot or custom templates) */
+  patientNamingConfig?: PatientNamingConfig;
 }
 
 export interface UserBillingProviderSettings {
@@ -128,10 +141,12 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   customTemplateName: '',
   templateId: 'clinical_note',
   modules: DEFAULT_USER_MODULES,
+  patientNamingId: DEFAULT_PATIENT_NAMING.id,
+  patientNamingConfig: DEFAULT_PATIENT_NAMING,
 };
 
 export function normalizeUserSettings(value: Partial<UserSettings> | null | undefined): UserSettings {
-  return {
+  const merged = {
     ...DEFAULT_USER_SETTINGS,
     ...(value || {}),
     modules: {
@@ -144,6 +159,19 @@ export function normalizeUserSettings(value: Partial<UserSettings> | null | unde
         ...(value?.billing?.provider || {}),
       },
     },
+  };
+
+  // Only pass fields that were actually provided so a bare patientNamingId
+  // can select a preset without being overridden by DEFAULT_USER_SETTINGS.patientNamingConfig.
+  const naming = resolvePatientNaming({
+    patientNamingId: value?.patientNamingId,
+    patientNamingConfig: value?.patientNamingConfig,
+  });
+
+  return {
+    ...merged,
+    patientNamingId: naming.id,
+    patientNamingConfig: normalizePatientNamingConfig(naming),
   };
 }
 
