@@ -1,13 +1,34 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../../../shared/types';
 import type { UserSettings } from '../../../../shared/types';
 import {
+  CUSTOM_PATIENT_NAMING_ID,
+  DEFAULT_PATIENT_NAMING,
+  PATIENT_NAMING_PRESETS,
+  normalizePatientNamingConfig,
+  resolvePatientNaming,
+} from '../../../../shared/patientNaming';
+import {
+  formatPatientDisplayName,
+  formatPatientFolderName,
+  formatPatientSubtitle,
+} from '../../../../shared/patientNamingEngine';
+import {
   X, Pencil, Save, User, Clock, Briefcase, MapPin, GraduationCap,
   FileText, Upload, Check, AlertCircle, Send, Plus, LayoutPanelTop,
-  CreditCard,
+  CreditCard, FolderKanban,
 } from 'lucide-react';
 import { requestNewTemplate } from '../services/api';
 import type { PatientImportResponse } from '../services/api';
+
+const NAMING_PREVIEW_PATIENT = {
+  name: 'John Smith',
+  dob: '1990-01-15',
+  sex: 'M' as const,
+  folderNumber: 'A-12',
+  idNumber: '9001155009087',
+  memberNumber: 'MEM001',
+};
 
 const HALO_TEMPLATE_OPTIONS = [
   { id: 'clinical_note', name: 'Clinical Note' },
@@ -71,14 +92,89 @@ export const SettingsModal: React.FC<Props> = ({
 
   const requiredFieldsMissing = !form.firstName.trim() || !form.lastName.trim() || !form.profession.trim() || !form.department.trim();
 
+  const activeNaming = useMemo(
+    () =>
+      resolvePatientNaming({
+        patientNamingId: form.patientNamingId,
+        patientNamingConfig: form.patientNamingConfig,
+      }),
+    [form.patientNamingId, form.patientNamingConfig]
+  );
+
+  const namingPreview = useMemo(
+    () => ({
+      folder: formatPatientFolderName(NAMING_PREVIEW_PATIENT, activeNaming),
+      display: formatPatientDisplayName(NAMING_PREVIEW_PATIENT, activeNaming),
+      subtitle: formatPatientSubtitle(NAMING_PREVIEW_PATIENT, activeNaming),
+    }),
+    [activeNaming]
+  );
+
+  const applyNamingPreset = (presetId: string) => {
+    if (presetId === CUSTOM_PATIENT_NAMING_ID) {
+      const custom = normalizePatientNamingConfig({
+        ...activeNaming,
+        id: CUSTOM_PATIENT_NAMING_ID,
+        label: 'Custom',
+      });
+      setForm((prev) => ({
+        ...prev,
+        patientNamingId: CUSTOM_PATIENT_NAMING_ID,
+        patientNamingConfig: custom,
+      }));
+      return;
+    }
+    const preset =
+      PATIENT_NAMING_PRESETS.find((item) => item.id === presetId) || DEFAULT_PATIENT_NAMING;
+    setForm((prev) => ({
+      ...prev,
+      patientNamingId: preset.id,
+      patientNamingConfig: normalizePatientNamingConfig(preset),
+    }));
+  };
+
+  const updateCustomNaming = (
+    patch: Partial<{
+      folderTemplate: string;
+      displayTemplate: string;
+      subtitleTemplate: string;
+      nameSplit: 'last_token_is_surname' | 'first_token_is_surname';
+      missingFieldBehavior: 'omit' | 'placeholder' | 'fallback_default';
+    }>
+  ) => {
+    setForm((prev) => {
+      const base = resolvePatientNaming({
+        patientNamingId: prev.patientNamingId,
+        patientNamingConfig: prev.patientNamingConfig,
+      });
+      const next = normalizePatientNamingConfig({
+        ...base,
+        ...patch,
+        id: CUSTOM_PATIENT_NAMING_ID,
+        label: 'Custom',
+      });
+      return {
+        ...prev,
+        patientNamingId: CUSTOM_PATIENT_NAMING_ID,
+        patientNamingConfig: next,
+      };
+    });
+  };
+
   const handleSave = async () => {
     if (editMode && requiredFieldsMissing) return;
     setSaving(true);
     try {
+      const naming = resolvePatientNaming({
+        patientNamingId: form.patientNamingId,
+        patientNamingConfig: form.patientNamingConfig,
+      });
       const updated = normalizeUserSettings({
         ...form,
         noteTemplate: templateTab,
         templateId: form.templateId || 'clinical_note',
+        patientNamingId: naming.id,
+        patientNamingConfig: naming,
       });
       await onSave(updated);
       setForm(updated);
@@ -471,6 +567,121 @@ export const SettingsModal: React.FC<Props> = ({
             )}
           </div>
 
+          {/* Patient Naming */}
+          <div className="border-t border-slate-100 pt-6">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+              <FolderKanban size={12} /> Patient folder naming
+            </h3>
+            <p className="text-xs text-slate-400 mb-3">
+              Controls Drive folder encoding and how patient names appear in the app. Demographics stay stored as structured fields.
+            </p>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Naming preset</label>
+                <select
+                  value={
+                    PATIENT_NAMING_PRESETS.some((p) => p.id === activeNaming.id)
+                      ? activeNaming.id
+                      : CUSTOM_PATIENT_NAMING_ID
+                  }
+                  onChange={(e) => applyNamingPreset(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition bg-white"
+                >
+                  {PATIENT_NAMING_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                  <option value={CUSTOM_PATIENT_NAMING_ID}>Custom templates</option>
+                </select>
+              </div>
+
+              {(activeNaming.id === CUSTOM_PATIENT_NAMING_ID ||
+                !PATIENT_NAMING_PRESETS.some((p) => p.id === activeNaming.id)) && (
+                <div className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Folder template</label>
+                    <input
+                      type="text"
+                      value={activeNaming.folderTemplate}
+                      onChange={(e) => updateCustomNaming({ folderTemplate: e.target.value })}
+                      placeholder="{name}__{dob}__{sex}"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm font-mono focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Display template</label>
+                    <input
+                      type="text"
+                      value={activeNaming.displayTemplate}
+                      onChange={(e) => updateCustomNaming({ displayTemplate: e.target.value })}
+                      placeholder="{name}"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm font-mono focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Subtitle template</label>
+                    <input
+                      type="text"
+                      value={activeNaming.subtitleTemplate || '{dob}'}
+                      onChange={(e) => updateCustomNaming({ subtitleTemplate: e.target.value })}
+                      placeholder="{dob}"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm font-mono focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition bg-white"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1">Name split</label>
+                      <select
+                        value={activeNaming.nameSplit || 'last_token_is_surname'}
+                        onChange={(e) =>
+                          updateCustomNaming({
+                            nameSplit: e.target.value as 'last_token_is_surname' | 'first_token_is_surname',
+                          })
+                        }
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition bg-white"
+                      >
+                        <option value="last_token_is_surname">Last token is surname</option>
+                        <option value="first_token_is_surname">First token is surname</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1">Missing fields</label>
+                      <select
+                        value={activeNaming.missingFieldBehavior || 'fallback_default'}
+                        onChange={(e) =>
+                          updateCustomNaming({
+                            missingFieldBehavior: e.target.value as
+                              | 'omit'
+                              | 'placeholder'
+                              | 'fallback_default',
+                          })
+                        }
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-100 outline-none transition bg-white"
+                      >
+                        <option value="fallback_default">Fallback defaults</option>
+                        <option value="omit">Omit empty tokens</option>
+                        <option value="placeholder">Use placeholder</option>
+                      </select>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Tokens: {'{name}'}, {'{first_name}'}, {'{last_name}'}, {'{dob}'}, {'{dob_compact}'}, {'{sex}'},{' '}
+                    {'{folder_number}'}, {'{id_number}'}, {'{member_number}'}
+                  </p>
+                </div>
+              )}
+
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Preview</p>
+                <p className="text-sm font-semibold text-slate-800">{namingPreview.display}</p>
+                <p className="text-xs text-slate-500">{namingPreview.subtitle}</p>
+                <p className="text-[11px] font-mono text-slate-400 break-all">Drive: {namingPreview.folder}</p>
+              </div>
+            </div>
+          </div>
+
           {/* Billing Defaults */}
           <div className="border-t border-slate-100 pt-6">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
@@ -756,7 +967,10 @@ export const SettingsModal: React.FC<Props> = ({
         form.customTemplateContent !== normalizeUserSettings(settings || DEFAULT_SETTINGS).customTemplateContent ||
         form.templateId !== normalizeUserSettings(settings || DEFAULT_SETTINGS).templateId ||
         JSON.stringify(form.modules || {}) !== JSON.stringify(normalizeUserSettings(settings || DEFAULT_SETTINGS).modules || {}) ||
-        JSON.stringify(form.billing || {}) !== JSON.stringify(normalizeUserSettings(settings || DEFAULT_SETTINGS).billing || {}) ? (
+        JSON.stringify(form.billing || {}) !== JSON.stringify(normalizeUserSettings(settings || DEFAULT_SETTINGS).billing || {}) ||
+        JSON.stringify(form.patientNamingConfig || {}) !==
+          JSON.stringify(normalizeUserSettings(settings || DEFAULT_SETTINGS).patientNamingConfig || {}) ||
+        form.patientNamingId !== normalizeUserSettings(settings || DEFAULT_SETTINGS).patientNamingId ? (
           <div className="border-t border-slate-100 p-4 bg-slate-50 flex gap-3">
             <button
               onClick={() => {

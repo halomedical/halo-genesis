@@ -33,9 +33,18 @@ import { runSchedulerNow, getSchedulerStatus } from '../jobs/scheduler';
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../shared/types';
 import { resolveEffectiveFeatureFlags } from '../../shared/featureFlags';
 import type { AdmissionsBoard, ScribeSession } from '../../shared/types';
+import { formatPatientFolderName } from '../../shared/patientNamingEngine';
 import { getVpsJwt, getVpsConfig, setVpsConfig } from '../services/vpsApi';
 import { loadExtensionRegistry } from '../services/extensionsRegistry';
 import { requireFeature } from '../middleware/requireFeature';
+import {
+  loadUserSettingsFromSession,
+  resolveNamingFromSettings,
+  USER_SETTINGS_KEY,
+  USER_SETTINGS_V2_MARKER,
+  normalizeSettingsEmail,
+  parseSettingsBlob,
+} from '../services/userSettings';
 
 const router = Router();
 router.use(requireAuth);
@@ -65,26 +74,6 @@ const BILLING_ELIGIBILITY_FILE_NAME = 'halo_billing_eligibility.json';
 // In-memory cache for first page of file list (per folder). Makes repeat views instant.
 const FILES_CACHE_TTL_MS = 30_000; // 30 seconds
 const filesListCache = new Map<string, { files: Array<{ id: string; name: string; mimeType: string; url: string; thumbnail?: string; createdTime: string }>; nextPage: string | null; cachedAt: number }>();
-
-const USER_SETTINGS_KEY = 'user_settings';
-const USER_SETTINGS_V2_MARKER = '__by_email__';
-
-function normalizeSettingsEmail(userEmail: string): string {
-  return String(userEmail || '').trim().toLowerCase();
-}
-
-function parseSettingsBlob(raw: string | null): Record<string, unknown> | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object') {
-      return parsed as Record<string, unknown>;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 function invalidateFilesCacheForFolder(folderId: string): void {
   for (const key of filesListCache.keys()) {
@@ -349,6 +338,10 @@ router.get('/scheduler-status', async (_req: Request, res: Response) => {
 router.post('/patients/import', async (req: Request, res: Response) => {
   try {
     const token = req.session.accessToken!;
+    const userEmail = req.session.userEmail!;
+    const namingConfig = resolveNamingFromSettings(
+      await loadUserSettingsFromSession(token, userEmail)
+    );
     const rootId = await getHaloRootFolder(token);
     const body = (req.body || {}) as Record<string, unknown>;
 
@@ -421,10 +414,20 @@ router.post('/patients/import', async (req: Request, res: Response) => {
       }
 
       try {
+        const namingFields = {
+          name: candidate.name,
+          dob: candidate.dob,
+          sex: candidate.sex,
+          folderNumber: candidate.folderNumber,
+          idNumber: candidate.idNumber,
+          memberNumber: candidate.memberNumber,
+          initials: candidate.initials,
+        };
+        const folderName = formatPatientFolderName(namingFields, namingConfig);
         const folder = await driveRequest(token, '/files', {
           method: 'POST',
           body: JSON.stringify({
-            name: `${candidate.name}__${candidate.dob}__${candidate.sex}`,
+            name: folderName,
             parents: [rootId],
             mimeType: 'application/vnd.google-apps.folder',
             appProperties: {
@@ -545,12 +548,26 @@ router.post('/patients', async (req: Request, res: Response) => {
     }
 
     const token = req.session.accessToken!;
+    const userEmail = req.session.userEmail!;
+    const namingConfig = resolveNamingFromSettings(
+      await loadUserSettingsFromSession(token, userEmail)
+    );
     const rootId = await getHaloRootFolder(token);
+    const namingFields = {
+      name,
+      dob,
+      sex,
+      folderNumber: folderNumber || undefined,
+      idNumber: idNumber || undefined,
+      memberNumber: memberNumber || undefined,
+      initials: initials || undefined,
+    };
+    const folderName = formatPatientFolderName(namingFields, namingConfig);
 
     const folder = await driveRequest(token, '/files', {
       method: 'POST',
       body: JSON.stringify({
-        name: `${name}__${dob}__${sex}`,
+        name: folderName,
         parents: [rootId],
         mimeType: 'application/vnd.google-apps.folder',
         appProperties: {
@@ -744,6 +761,23 @@ router.patch('/patients/:id', async (req: Request, res: Response) => {
     if (hasOwnField(body, 'familyName')) nextAppProperties.familyName = familyName || '';
     if (hasOwnField(body, 'familyMemberIds')) nextAppProperties.familyMemberIds = familyMemberIds?.join(',') || '';
 
+    const userEmail = req.session.userEmail!;
+    const namingConfig = resolveNamingFromSettings(
+      await loadUserSettingsFromSession(token, userEmail)
+    );
+    const folderName = formatPatientFolderName(
+      {
+        name: finalName,
+        dob: finalDob,
+        sex: finalSex,
+        folderNumber: nextAppProperties.folderNumber || undefined,
+        idNumber: nextAppProperties.idNumber || undefined,
+        memberNumber: nextAppProperties.memberNumber || undefined,
+        initials: nextAppProperties.initials || undefined,
+      },
+      namingConfig
+    );
+
     await fetch(`${driveApi}/files/${id}`, {
       method: 'PATCH',
       headers: {
@@ -751,7 +785,7 @@ router.patch('/patients/:id', async (req: Request, res: Response) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        name: `${finalName}__${finalDob}__${finalSex}`,
+        name: folderName,
         appProperties: nextAppProperties,
       }),
     });

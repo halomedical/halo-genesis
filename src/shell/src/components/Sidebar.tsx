@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Patient } from '../../../../shared/types';
+import { DEFAULT_PATIENT_NAMING, type PatientNamingConfig } from '../../../../shared/patientNaming';
+import {
+  formatPatientDisplayName,
+  formatPatientSubtitle,
+} from '../../../../shared/patientNamingEngine';
 import {
   Plus, LogOut, Search, Trash2, ChevronDown,
   Settings, Loader2, Calendar as CalendarIcon, Users, Clock, ChevronsLeft, ChevronsRight, LayoutPanelTop, Bot, Sparkles,
@@ -11,6 +16,7 @@ interface SidebarProps {
   patients: Patient[];
   selectedPatientId: string | null;
   recentPatientIds: string[];
+  patientNaming?: PatientNamingConfig;
   onSelectPatient: (id: string) => void;
   onCreatePatient: () => void;
   onDeletePatient: (patient: Patient) => void;
@@ -38,6 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   patients,
   selectedPatientId,
   recentPatientIds,
+  patientNaming = DEFAULT_PATIENT_NAMING,
   onSelectPatient,
   onCreatePatient,
   onDeletePatient,
@@ -77,11 +84,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const billingActive = activeMainView === 'billing';
 
   // Local filter
-  const localFiltered = patients.filter(
-    p =>
-      p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.dob.includes(searchTerm),
-  );
+  const localFiltered = patients.filter((p) => {
+    const q = searchTerm.toLowerCase();
+    const display = formatPatientDisplayName(p, patientNaming).toLowerCase();
+    return (
+      p.name.toLowerCase().includes(q) ||
+      display.includes(q) ||
+      p.dob.includes(searchTerm) ||
+      formatPatientSubtitle(p, patientNaming).toLowerCase().includes(q)
+    );
+  });
 
   // Debounced AI concept search
   useEffect(() => {
@@ -213,7 +225,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const renderPatientRow = (patient: Patient, keyPrefix: string) => (
+  const renderPatientRow = (patient: Patient, keyPrefix: string) => {
+    const displayName = formatPatientDisplayName(patient, patientNaming);
+    const subtitle = formatPatientSubtitle(patient, patientNaming);
+    return (
     <div
       key={`${keyPrefix}-${patient.id}`}
       onClick={() => {
@@ -250,11 +265,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               : 'bg-slate-200 text-slate-500 group-hover:bg-slate-300'
           }`}
         >
-          {patient.name.charAt(0)}
+          {displayName.charAt(0)}
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-medium truncate leading-tight">{patient.name}</p>
-          <p className="text-[11px] text-slate-400 truncate">{patient.dob}</p>
+          <p className="text-sm font-medium truncate leading-tight">{displayName}</p>
+          <p className="text-[11px] text-slate-400 truncate">{subtitle}</p>
         </div>
       </div>
       {!selectionMode ? (
@@ -270,7 +285,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </button>
       ) : null}
     </div>
-  );
+    );
+  };
 
   return (
     <div

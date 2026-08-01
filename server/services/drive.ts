@@ -1,5 +1,8 @@
 import mammoth from 'mammoth';
 import { config } from '../config';
+import { parseFolderString } from '../../shared/patientNamingEngine';
+
+export { parseFolderString };
 
 // Polyfill browser APIs needed by pdf-parse (set up at module load time)
 // These are needed because pdf-parse's dependency pdfjs-dist uses them at module load
@@ -638,33 +641,6 @@ export function isValidSex(sex: string): sex is 'M' | 'F' {
 }
 
 // --- Patient Folder Parsing ---
-
-export function parseFolderString(folderName: string): { pName: string; pDob: string; pSex: string } | null {
-  if (!folderName.includes('__')) return null;
-  const parts = folderName.split('__');
-  if (parts.length < 3) return null;
-
-  let pName = parts[0];
-  let pDob = parts[1];
-  const pSex = parts[2];
-
-  if (parts[0].includes('_')) {
-    const nameParts = parts[0].split('_');
-    if (nameParts.length > 1) {
-      pName = `${nameParts[1]} ${nameParts[0]}`;
-    } else {
-      pName = parts[0].replace('_', ' ');
-    }
-    if (parts[1].includes('-')) {
-      const d = parts[1].split('-');
-      if (d[0].length === 2 && d[2]?.length === 4) {
-        pDob = `${d[2]}-${d[1]}-${d[0]}`;
-      }
-    }
-  }
-
-  return { pName, pDob, pSex };
-}
 
 export function parsePatientFolder(f: DriveFileRaw) {
   const familyMemberIds = (f.appProperties?.familyMemberIds || '')

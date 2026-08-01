@@ -12,7 +12,8 @@
     "build:server": "tsc",
     "build:shell": "npm run install:shell && npm run build --prefix src/shell",
     "start": "node server/dist/server/index.js",
-    "test:calendar": "ts-node server/tests/calendar-normalise.test.ts"
+    "test:calendar": "ts-node server/tests/calendar-normalise.test.ts",
+    "test:patient-naming": "ts-node server/tests/patient-naming.test.ts"
   },
   "engines": {
     "node": "20.x"

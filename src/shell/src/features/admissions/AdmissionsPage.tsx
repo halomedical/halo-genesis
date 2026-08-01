@@ -11,6 +11,8 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, arrayMove, horizontalListSortingStrategy } from '@dnd-kit/sortable';
 import type { AdmissionsBoard, AdmissionsCard, Patient } from '../../../../../shared/types';
+import { DEFAULT_PATIENT_NAMING, type PatientNamingConfig } from '../../../../../shared/patientNaming';
+import { formatPatientDisplayName } from '../../../../../shared/patientNamingEngine';
 import { ApiError, fetchAdmissionsBoard, saveAdmissionsBoard } from '../../services/api';
 import { Loader2, Plus } from 'lucide-react';
 import { AdmissionsAddPatientModal } from './AdmissionsAddPatientModal';
@@ -28,6 +30,7 @@ import {
 
 interface Props {
   patients: Patient[];
+  patientNaming?: PatientNamingConfig;
   onToast: (message: string, type: 'success' | 'error' | 'info') => void;
   onOpenPatient: (
     patientId: string,
@@ -35,7 +38,12 @@ interface Props {
   ) => void;
 }
 
-export const AdmissionsPage: React.FC<Props> = ({ patients, onToast, onOpenPatient }) => {
+export const AdmissionsPage: React.FC<Props> = ({
+  patients,
+  patientNaming = DEFAULT_PATIENT_NAMING,
+  onToast,
+  onOpenPatient,
+}) => {
   const [board, setBoard] = useState<AdmissionsBoard | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -249,7 +257,7 @@ export const AdmissionsPage: React.FC<Props> = ({ patients, onToast, onOpenPatie
     nextColumn.cards.unshift({
       id: crypto.randomUUID(),
       patientId: patient.id,
-      patientName: patient.name,
+      patientName: formatPatientDisplayName(patient, patientNaming),
       folderNumber: patient.folderNumber,
       diagnosis: newCardDiagnosis.trim(),
       coManagingDoctors: newCardDoctorsInput
@@ -506,6 +514,7 @@ export const AdmissionsPage: React.FC<Props> = ({ patients, onToast, onOpenPatie
         open={showAddPatientModal}
         boardColumns={board.columns}
         filteredPatientResults={filteredPatientResults}
+        patientNaming={patientNaming}
         newCardPatientId={newCardPatientId}
         newCardSearch={newCardSearch}
         newCardSearchChange={setNewCardSearch}

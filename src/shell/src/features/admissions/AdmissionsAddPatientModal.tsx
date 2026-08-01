@@ -1,11 +1,17 @@
 import React from 'react';
 import type { AdmissionsColumn, Patient } from '../../../../../shared/types';
+import { DEFAULT_PATIENT_NAMING, type PatientNamingConfig } from '../../../../../shared/patientNaming';
+import {
+  formatPatientDisplayName,
+  formatPatientSubtitle,
+} from '../../../../../shared/patientNamingEngine';
 import { CheckCircle2, Plus, Search, X } from 'lucide-react';
 
 interface Props {
   open: boolean;
   boardColumns: AdmissionsColumn[];
   filteredPatientResults: Patient[];
+  patientNaming?: PatientNamingConfig;
   newCardPatientId: string;
   newCardSearch: string;
   newCardSearchChange: (value: string) => void;
@@ -26,6 +32,7 @@ export const AdmissionsAddPatientModal: React.FC<Props> = ({
   open,
   boardColumns,
   filteredPatientResults,
+  patientNaming = DEFAULT_PATIENT_NAMING,
   newCardPatientId,
   newCardSearch,
   newCardSearchChange,
@@ -99,10 +106,11 @@ export const AdmissionsAddPatientModal: React.FC<Props> = ({
                     }`}
                   >
                     <div>
-                      <p className="text-sm font-semibold">{patient.name}</p>
+                      <p className="text-sm font-semibold">
+                        {formatPatientDisplayName(patient, patientNaming)}
+                      </p>
                       <p className="mt-0.5 text-xs text-slate-400">
-                        {patient.dob}
-                        {patient.folderNumber ? ` · ${patient.folderNumber}` : ''}
+                        {formatPatientSubtitle(patient, patientNaming)}
                         {patient.idNumber ? ` · ${patient.idNumber}` : ''}
                       </p>
                     </div>
