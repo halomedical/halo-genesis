@@ -32,12 +32,12 @@ This guide walks you through putting the HALO web app on a public URL (e.g. `htt
 On your machine or CI:
 
 ```bash
-cd /path/to/HALO-Client-App-v1-Jonty
-npm ci
+cd /path/to/halo-genesis
+npm ci --include=dev
 npm run build
 ```
 
-This compiles the server to `dist/` and the client to `client/dist/`. The server will serve the client from `client/dist` when `NODE_ENV=production`.
+This compiles the server to `server/dist/` and the shell to `src/shell/dist/`. The server serves the shell from `src/shell/dist` when `NODE_ENV=production`.
 
 ### 2.2 Environment variables
 
@@ -118,7 +118,7 @@ sudo apt-get install -y nodejs
 
 ### 5.2 Copy the app and env
 
-- Copy the whole project (including `dist/` and `client/dist/` after `npm run build`) to the server, or clone the repo and run `npm ci && npm run build` on the server.
+- Copy the whole project (including `server/dist/` and `src/shell/dist/` after `npm run build`) to the server, or clone the repo and run `npm ci --include=dev && npm run build` on the server.
 - Put the production `.env` in the project root (same place as `package.json`).  
   Do **not** commit `.env` to git.
 
@@ -126,8 +126,8 @@ sudo apt-get install -y nodejs
 
 ```bash
 sudo npm install -g pm2
-cd /path/to/HALO-Client-App-v1-Jonty
-pm2 start dist/server/index.js --name halo-app
+cd /path/to/halo-genesis
+pm2 start server/dist/server/index.js --name halo-app
 pm2 save
 pm2 startup   # follow the command it prints so the app starts on reboot
 ```
