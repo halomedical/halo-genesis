@@ -8,6 +8,7 @@
     "dev:shell": "npm run dev --prefix src/shell",
     "dev": "echo \"Unified shell dev server: http://localhost:5173\" && concurrently \"npm run dev:server\" \"wait-on http://localhost:3001/api/health && npm run dev:shell\"",
     "install:shell": "npm ci --prefix src/shell --include=dev",
+    "postinstall": "npm run install:shell",
     "build": "npm run build:shell && tsc",
     "build:server": "tsc",
     "build:shell": "npm run install:shell && npm run build --prefix src/shell",
@@ -25,6 +26,7 @@
   "dependencies": {
     "@deepgram/sdk": "^4.11.3",
     "@google/generative-ai": "^0.24.1",
+    "@supabase/supabase-js": "^2.106.2",
     "cors": "^2.8.6",
     "docx": "^9.5.1",
     "dotenv": "^17.2.4",

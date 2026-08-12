@@ -155,7 +155,11 @@ export async function getVpsJwt(driveToken: string, userEmail: string): Promise<
         jwt: refreshed.access_token,
         jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
       };
-      await saveVpsCreds(driveToken, userEmail, updated);
+      try {
+        await saveVpsCreds(driveToken, userEmail, updated);
+      } catch (err) {
+        console.warn('[getVpsJwt] Could not persist refreshed VPS creds to Drive (non-fatal):', err);
+      }
       return updated.jwt;
     } catch { /* fall through to re-provision */ }
   }
@@ -171,7 +175,11 @@ export async function getVpsJwt(driveToken: string, userEmail: string): Promise<
       jwt: adminJwt,
       jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
     };
-    await saveVpsCreds(driveToken, userEmail, creds);
+    try {
+      await saveVpsCreds(driveToken, userEmail, creds);
+    } catch (err) {
+      console.warn('[getVpsJwt] Could not persist admin VPS creds to Drive (non-fatal):', err);
+    }
     return creds.jwt;
   }
 
@@ -182,10 +190,14 @@ export async function getVpsJwt(driveToken: string, userEmail: string): Promise<
   try {
     const registered = await registerDoctor(inviteToken, userEmail, password, userEmail.split('@')[0]);
     doctorJwt = registered.access_token;
-  } catch (err) {
-    // User already exists — login directly with admin credentials as fallback
-    const loggedIn = await loginDoctor(config.vpsAdminEmail, config.vpsAdminPassword);
-    doctorJwt = loggedIn.access_token;
+  } catch {
+    try {
+      const loggedIn = await loginDoctor(userEmail, password);
+      doctorJwt = loggedIn.access_token;
+    } catch {
+      const loggedIn = await loginDoctor(config.vpsAdminEmail, config.vpsAdminPassword);
+      doctorJwt = loggedIn.access_token;
+    }
   }
 
   const creds: VpsCreds = {
@@ -194,7 +206,11 @@ export async function getVpsJwt(driveToken: string, userEmail: string): Promise<
     jwt: doctorJwt,
     jwtExpiresAt: new Date(Date.now() + 23 * 3600 * 1000).toISOString(),
   };
-  await saveVpsCreds(driveToken, userEmail, creds);
+  try {
+    await saveVpsCreds(driveToken, userEmail, creds);
+  } catch (err) {
+    console.warn('[getVpsJwt] Could not persist VPS creds to Drive (non-fatal):', err);
+  }
   return creds.jwt;
 }
 
